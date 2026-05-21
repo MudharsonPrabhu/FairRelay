@@ -58,8 +58,23 @@ def _is_safe_callback_url(url: str) -> bool:
         if parsed.scheme != "https":
             return False
         host = (parsed.hostname or "").lower()
-        blocked_prefixes = ("localhost", "127.", "10.", "192.168.", "169.254.", "0.0.0.0", "::1")
-        return not any(host.startswith(p) for p in blocked_prefixes)
+        if ":" in host:
+            # IPv6: block loopback, link-local, ULA (fc00::/7), IPv4-mapped
+            blocked_ipv6 = ("::1", "fe80:", "fc00:", "fc", "fd", "::ffff:", "::")
+            if any(host.startswith(p) for p in blocked_ipv6):
+                return False
+        else:
+            # IPv4/hostname: block private, loopback, link-local, unspecified
+            # 172.16.0.0/12 covers 172.16–172.31
+            blocked_ipv4 = (
+                "localhost", "127.", "10.", "192.168.", "169.254.", "0.0.0.0", "0.",
+                "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
+                "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+                "172.28.", "172.29.", "172.30.", "172.31.",
+            )
+            if any(host.startswith(p) for p in blocked_ipv4):
+                return False
+        return True
     except Exception:
         return False
 RATE_LIMIT_MAX = 100  # requests per minute
@@ -425,12 +440,10 @@ class CarbonEstimateRequest(BaseModel):
         return v
 
 
-@router.post("/carbon/estimate")
+@router.post("/carbon/estimate", dependencies=[Depends(verify_api_key)])
 async def lorri_carbon_estimate(request: CarbonEstimateRequest):
     """
     Carbon Intelligence Agent v2 — per-shipment CO₂ estimation with real monetary impact.
-
-    No auth required (public computation endpoint — no sensitive data).
 
     Pipeline:
       1. Data Ingestion    — validate & normalise, resolve truck-specific emission factors

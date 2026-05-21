@@ -7,7 +7,7 @@ import { useAuth } from "../context/AuthContext";
 export function TopBar() {
   const [searchQuery, setSearchQuery] = useState("");
   const { showToast } = useToast();
-  const { user, logout, isDemo } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   const handleSearch = (e: React.KeyboardEvent) => {

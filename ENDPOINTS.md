@@ -107,7 +107,7 @@ POST https://fairrelay-brain-gdm1.onrender.com/api/v1/consolidate
 
 ---
 
-### Call 3 — Carbon Intelligence (No Auth)
+### Call 3 — Carbon Intelligence
 
 ```
 POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate
@@ -212,7 +212,7 @@ Ops Dashboard — React + Vite              (fair-relay.vercel.app)
 | Service | Method | Header |
 |---------|--------|--------|
 | Brain `/lorri/*` | API Key | `x-api-key: fr_live_demo_key_2026` |
-| Brain `/lorri/health`, `/lorri/carbon/estimate` | None | — |
+| Brain `/lorri/health` | None | — |
 | Brain `/api/v1/*` | None | — |
 | Backend `/v1/*` | API Key | `x-api-key: <your-key>` |
 | Backend `/api/auth/*` | OTP → JWT | `Authorization: Bearer <token>` |
@@ -535,12 +535,13 @@ risk_level:
 
 ### 2.4 `POST /lorri/carbon/estimate`
 
-**Carbon Intelligence Agent v2.0.** No auth required. Runs a 5-step server-side pipeline with truck-specific IPCC AR6/CPCB emission factors, per-shipment CO₂ and fuel ₹ savings, five opportunity types (consolidation, scheduling, intermodal, EV route, vehicle upgrade), and a Gemini 2.5 Flash AI insight.
+**Carbon Intelligence Agent v2.0.** **Auth:** `x-api-key` header required. Runs a 5-step server-side pipeline with truck-specific IPCC AR6/CPCB emission factors, per-shipment CO₂ and fuel ₹ savings, five opportunity types (consolidation, scheduling, intermodal, EV route, vehicle upgrade), and a Gemini 2.5 Flash AI insight.
 
 **Request:**
 ```bash
 curl -X POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate \
   -H "Content-Type: application/json" \
+  -H "x-api-key: fr_live_demo_key_2026" \
   -d '{
     "shipments": [
       {
@@ -799,7 +800,7 @@ async function fairDispatch(drivers: any[], routes: any[]) {
 async function carbonReport(shipments: any[]) {
   const res = await fetch(`${FAIRRELAY_BRAIN}/lorri/carbon/estimate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
     body: JSON.stringify({ shipments }),
   });
   return res.json();
@@ -827,6 +828,7 @@ async def carbon_report(shipments: list) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             f"{BRAIN_URL}/lorri/carbon/estimate",
+            headers={"x-api-key": API_KEY},
             json={"shipments": shipments},
         )
         return resp.json()
@@ -1399,7 +1401,7 @@ Returns the current state of the route continuous learning system — the adapti
 
 See [Section 2.4](#24-post-lorricarbonestimat) for the full LoRRI-facing endpoint documentation.
 
-The same endpoint is available without auth at: `POST /lorri/carbon/estimate`
+The same endpoint is also available via the LoRRI namespace at: `POST /lorri/carbon/estimate` (requires `x-api-key`)
 
 **v2.0 additions:** truck-specific EFs, `fuel_saved_inr`, `co2_intensity_g_tkm` per shipment; `fuelSavedINR`, `treesEquivalent`, `emissionIntensity`, `carbonCreditINR` in summary; `saving_inr` on opportunities; `intermodal` and `ev_route` opportunity types.
 
@@ -2265,10 +2267,10 @@ All errors follow this shape:
 
 | Endpoint group | Limit | Window |
 |----------------|-------|--------|
-| `/lorri/allocate`, `/lorri/wellness`, `/lorri/stats` | 100 req | per API key per minute |
+| `/lorri/allocate`, `/lorri/wellness`, `/lorri/stats`, `/lorri/carbon/estimate` | 100 req | per API key per minute |
 | `/api/auth/*`, `/api/otp/*` | 30 req | per IP per minute |
 | `/api/v1/*` (Brain core) | No limit | — |
-| `/lorri/health`, `/lorri/carbon/estimate` | No limit | — |
+| `/lorri/health` | No limit | — |
 | `/v1/*` (Backend gateway) | No limit | — |
 
 Rate limit exceeded returns `429` with header `Retry-After: 60`.
