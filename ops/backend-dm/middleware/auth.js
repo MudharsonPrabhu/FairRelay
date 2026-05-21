@@ -17,6 +17,25 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
+    // ── DEV BYPASS (local only) ─────────────────────────────────────────────
+    // Allows the frontend to skip OTP login during local development.
+    // NEVER active in production (NODE_ENV === 'production' check is intentional).
+    if (process.env.NODE_ENV !== 'production' && token === 'dev-bypass-real-data') {
+      req.user = {
+        id: 'dev-admin-001',
+        name: 'Dev Admin',
+        phone: '+919999999999',
+        role: 'DISPATCHER',
+        status: 'active',
+        rating: 5,
+        deliveriesCount: 0,
+        totalEarnings: 0,
+        weeklyEarnings: 0,
+      };
+      return next();
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
     const decoded = verifyToken(token);
 
     const user = await prisma.user.findUnique({
