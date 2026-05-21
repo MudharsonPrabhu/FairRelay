@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, BarChart3, Brain, Layers, Route,
-  Users, Package, ClipboardList, Navigation, Repeat2,
-  Leaf, FileText, Receipt, Key, Settings, Search,
+  Users, Package, Navigation, Repeat2,
+  Leaf, FileText, Key, Settings, Search,
   LogOut, Shield,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -41,7 +41,6 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { icon: Users,         label: 'Drivers',         to: '/drivers',            shortcut: '⌘6' },
       { icon: Package,       label: 'Packages',        to: '/packages'                           },
-      { icon: ClipboardList, label: 'Assign Tasks',    to: '/assign-tasks'                       },
       { icon: Navigation,    label: 'Allocate Routes', to: '/allocate-routes'                    },
       { icon: Repeat2,       label: 'Absorption',      to: '/absorption-requests'                },
     ],
@@ -51,7 +50,6 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { icon: Leaf,     label: 'Carbon Tracking', to: '/carbon-tracking' },
       { icon: FileText, label: 'e-Way Bills',     to: '/eway-bill'       },
-      { icon: Receipt,  label: 'Invoice AI',      to: '/invoice',         aiTag: true },
     ],
   },
   {
