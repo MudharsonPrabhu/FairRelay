@@ -178,6 +178,8 @@ POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate
    - [Absorption & Synergy](#48-absorption--synergy)
    - [Virtual Hubs & E-Way Bills](#49-virtual-hubs--e-way-bills)
    - [API Keys](#410-api-keys)
+   - [Dashboard](#411-dashboard)
+   - [Dispatch (AI Proxy)](#412-dispatch-ai-proxy)
 5. [Error Codes Reference](#5-error-codes-reference)
 6. [Rate Limits](#6-rate-limits)
 
@@ -1736,10 +1738,66 @@ Base URL: `https://fairrelay-backend.onrender.com`
 #### `POST /api/deliveries/create`
 ```json
 // Request
-{ "shipment_id": "SH-001", "driver_id": "drv_001", "route_id": "rt_001" }
+{
+  "pickupLocation": "Mumbai JNPT",
+  "pickupLat": 19.076,
+  "pickupLng": 72.877,
+  "pickupTime": "2026-05-21T08:00:00Z",
+  "deliveryLocation": "Pune Industrial",
+  "deliveryLat": 18.52,
+  "deliveryLng": 73.856,
+  "deliveryTime": "2026-05-21T14:00:00Z",
+  "cargoType": "General",
+  "cargoWeight": 800,
+  "dispatcherId": "usr_001",
+  "timeWindowStart": "2026-05-21T08:00:00Z",
+  "timeWindowEnd": "2026-05-21T12:00:00Z"
+}
 
 // Response 201
-{ "id": "dlv_001", "status": "ASSIGNED" }
+{ "success": true, "id": "dlv_001", "status": "PENDING" }
+```
+
+#### `GET /api/deliveries/unassigned`
+Returns deliveries not yet assigned to a driver, scoped to a courier company.
+
+```bash
+GET /api/deliveries/unassigned?courierCompanyId=20c97585-a16d-45e7-8d5f-0ef5ce85b896
+```
+**Auth:** JWT required
+
+```json
+// Response 200
+[
+  {
+    "id": "dlv_001",
+    "pickupLocation": "Mumbai JNPT",
+    "pickupLat": 19.076,
+    "pickupLng": 72.877,
+    "deliveryLocation": "Pune Industrial",
+    "deliveryLat": 18.52,
+    "deliveryLng": 73.856,
+    "cargoWeight": 800,
+    "status": "PENDING"
+  }
+]
+```
+
+#### `POST /api/routes/assign-multi-stop`
+Assign multiple deliveries to a driver as a single multi-stop route.
+
+**Auth:** JWT required
+
+```json
+// Request
+{
+  "driverId": "drv_001",
+  "deliveryIds": ["dlv_001", "dlv_002", "dlv_003"],
+  "routeOrder": ["dlv_001", "dlv_003", "dlv_002"]
+}
+
+// Response 200
+{ "success": true, "routeId": "rt_001", "assignedCount": 3 }
 ```
 
 #### `POST /api/deliveries/:id/start`
@@ -1816,6 +1874,50 @@ Base URL: `https://fairrelay-backend.onrender.com`
   "stress_level": "LOW",
   "recommendation": "Short break recommended in 90 minutes"
 }
+```
+
+#### `GET /api/wellness/cognitive-fleet`
+Fleet-wide cognitive load summary across all drivers.
+
+```json
+// Response 200
+{
+  "fleet": [
+    { "driver_id": "drv_001", "name": "Rajan Kumar", "cognitive_load_score": 62, "fatigue_level": "MODERATE" },
+    { "driver_id": "drv_002", "name": "Suresh Pillai", "cognitive_load_score": 88, "fatigue_level": "HIGH" }
+  ],
+  "summary": {
+    "avg_cognitive_load": 75,
+    "high_risk_count": 1,
+    "fit_count": 1
+  }
+}
+```
+
+#### `GET /api/packages`
+```json
+// Response 200
+[
+  { "id": "PKG-1234", "cargoType": "General", "status": "PENDING", "pickupLocation": "Mumbai JNPT", "deliveryLocation": "Pune Industrial" }
+]
+```
+
+#### `GET /api/packages/history-web`
+Package delivery history formatted for the web dashboard.
+
+```json
+// Response 200
+[
+  {
+    "id": "PKG-1234",
+    "cargoType": "General",
+    "status": "DELIVERED",
+    "pickupLocation": "Mumbai JNPT",
+    "deliveryLocation": "Pune Industrial",
+    "deliveredAt": "2026-05-20T14:30:00Z",
+    "driverName": "Rajan Kumar"
+  }
+]
 ```
 
 ---
@@ -2068,6 +2170,37 @@ Absorption = peer-to-peer truck handover when a driver cannot complete a deliver
 { "id": "ewb_002", "ewb_number": "EWB2026051600123", "valid_until": "2026-05-23" }
 ```
 
+#### `PUT /api/eway-bills/:id`
+```json
+// Request — partial update, send only fields to change
+{
+  "vehicle": "MH-12-AB-9999",
+  "valid": "2026-06-30",
+  "status": "Active"
+}
+
+// Response 200
+{ "id": "ewb_001", "updated_at": "2026-05-21T10:00:00Z" }
+```
+
+#### `DELETE /api/eway-bills/:id`
+```json
+// Response 200
+{ "success": true, "message": "E-Way Bill deleted." }
+```
+
+#### `GET /api/eway-bills/stats`
+```json
+// Response 200
+{ "active": 6, "expireSoon": 1, "expired": 1 }
+```
+
+#### `DELETE /api/virtual-hubs/:id`
+```json
+// Response 200
+{ "success": true }
+```
+
 ---
 
 ### 4.10 API Keys
@@ -2139,6 +2272,227 @@ All errors follow this shape:
 | `/v1/*` (Backend gateway) | No limit | — |
 
 Rate limit exceeded returns `429` with header `Retry-After: 60`.
+
+---
+
+### 4.11 Dashboard
+
+Ops dashboard KPI and activity endpoints. All require JWT.
+
+#### `GET /api/dashboard/stats`
+```json
+// Response 200
+{
+  "pendingRequests": 12,
+  "activeShipments": 47,
+  "drivers": 8,
+  "fleetUtilization": 73
+}
+```
+
+#### `GET /api/dashboard/activity`
+Weekly shipment activity (last 7 days).
+
+```json
+// Response 200
+[
+  { "day": "Mon", "requests": 14 },
+  { "day": "Tue", "requests": 21 },
+  { "day": "Wed", "requests": 18 }
+]
+```
+
+#### `GET /api/dashboard/live-tracking-web`
+Live vehicle positions formatted for the web dashboard.
+
+```json
+// Response 200
+[
+  {
+    "id": "drv_001",
+    "name": "Rajan Kumar",
+    "plate": "MH-12-AB-3456",
+    "lat": 19.076,
+    "lng": 72.877,
+    "status": "EN_ROUTE",
+    "speed": 48
+  }
+]
+```
+
+#### `GET /api/dashboard/live-tracking-gps`
+Raw GPS telemetry (higher frequency, for native mobile clients).
+
+```json
+// Response 200
+[
+  { "driverId": "drv_001", "lat": 19.076, "lng": 72.877, "heading": 245, "timestamp": "2026-05-21T09:12:00Z" }
+]
+```
+
+#### `GET /api/dashboard/recent-absorptions`
+Most recent absorption (peer handover) events for the dashboard feed.
+
+```json
+// Response 200
+[
+  {
+    "id": "abs_001",
+    "from_driver": "Rajan Kumar",
+    "to_driver": "Suresh Pillai",
+    "route": "Mumbai → Pune",
+    "weight_kg": 800,
+    "status": "COMPLETED",
+    "created_at": "2026-05-21T08:45:00Z"
+  }
+]
+```
+
+---
+
+### 4.12 Dispatch (AI Proxy)
+
+The backend's `/api/dispatch/*` namespace wraps the Brain's allocation pipeline and exposes it to the dashboard with JWT auth. Use these endpoints from the ops dashboard; use `/lorri/allocate` for LoRRI TMS integration.
+
+#### `GET /api/dispatch/health`
+Brain connectivity check. Returns connected/offline status.
+
+```json
+// Response 200
+{
+  "status": "connected",
+  "brain_url": "https://fairrelay-brain-gdm1.onrender.com",
+  "latency_ms": 312,
+  "agents_available": 8
+}
+```
+
+#### `POST /api/dispatch/allocate`
+Proxies to Brain `POST /api/v1/allocate/langgraph`. Full request/response schema in [Section 3.1](#31-allocation--langgraph-pipeline).
+
+**Auth:** JWT required
+
+#### `GET /api/dispatch/runs`
+List all allocation runs.
+
+```json
+// Response 200
+[
+  {
+    "id": "run_abc123",
+    "createdAt": "2026-05-21T08:00:00Z",
+    "status": "SUCCESS",
+    "finalGini": 0.034,
+    "fairnessGrade": "A+",
+    "driverCount": 5,
+    "packageCount": 8
+  }
+]
+```
+
+#### `GET /api/dispatch/runs/:runId`
+Single allocation run detail including per-driver assignments.
+
+```json
+// Response 200
+{
+  "id": "run_abc123",
+  "createdAt": "2026-05-21T08:00:00Z",
+  "status": "SUCCESS",
+  "finalGini": 0.034,
+  "allocations": [
+    { "driverName": "Rajan Kumar", "packages": 4, "workloadScore": 65.3, "explanation": "..." }
+  ],
+  "agentEvents": [
+    { "agent": "fairness_manager", "message": "ACCEPT — Gini 0.034" }
+  ]
+}
+```
+
+#### `GET /api/dispatch/drivers`
+Drivers enriched with dispatch history (workload scores, recent run stats).
+
+```json
+// Response 200
+[
+  {
+    "id": "drv_001",
+    "name": "Rajan Kumar",
+    "recentWorkloadScore": 65.3,
+    "totalRuns": 14,
+    "avgFairnessScore": 0.91
+  }
+]
+```
+
+#### `GET /api/dispatch/drivers/:id`
+Single driver dispatch profile.
+
+#### `GET /api/dispatch/routes/:id`
+Route detail for a specific dispatch run assignment.
+
+#### `POST /api/dispatch/feedback`
+Submit dispatcher feedback on an allocation run.
+
+```json
+// Request
+{
+  "runId": "run_abc123",
+  "rating": 4,
+  "notes": "Good distribution, Rajan's route was slightly heavy"
+}
+
+// Response 201
+{ "success": true }
+```
+
+#### `POST /api/dispatch/wellness-check`
+Run wellness scoring on a list of drivers before dispatch.
+
+```json
+// Request
+{ "drivers": [ { "id": "drv_001", "name": "Rajan", "hoursToday": 5, "hoursSinceRest": 4, "isIll": false } ] }
+
+// Response 200
+{
+  "drivers": [
+    { "id": "drv_001", "wellnessScore": 68, "riskLevel": "MEDIUM", "fitForDispatch": true, "recommendation": "Monitor — 5h on duty" }
+  ]
+}
+```
+
+#### `POST /api/dispatch/carbon-calculate`
+Calculate carbon impact for a set of routes.
+
+```json
+// Request
+{ "routes": [ { "id": "rt_001", "distance_km": 149, "weight_kg": 800 } ] }
+
+// Response 200
+{
+  "routes": [
+    { "id": "rt_001", "co2_kg": 12.5, "saved_vs_baseline_kg": 18.8 }
+  ],
+  "total_co2_kg": 12.5,
+  "total_saved_kg": 18.8
+}
+```
+
+#### `POST /api/dispatch/night-safety-filter`
+Apply night-time wellness constraints to a driver roster.
+
+```json
+// Request
+{ "drivers": [ { "id": "drv_001", "hoursToday": 8 } ], "currentHour": 22 }
+
+// Response 200
+{
+  "isNightMode": true,
+  "drivers": [
+    { "id": "drv_001", "fitForNight": false, "reason": "Exceeded 8h on duty" }
+  ]
+}
+```
 
 ---
 

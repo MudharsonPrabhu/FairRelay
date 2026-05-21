@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, Bell, LogOut, Brain, FlaskConical } from "lucide-react";
+import { Search, Bell, LogOut, Brain } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useToast } from "../context/ToastContext";
 import { useAuth } from "../context/AuthContext";
@@ -40,14 +40,6 @@ export function TopBar() {
 
   return (
     <div className="sticky top-0 z-40 ml-[260px]">
-      {isDemo && (
-        <div className="w-full bg-amber-500/10 border-b border-amber-500/20 px-8 py-1.5 flex items-center gap-2">
-          <FlaskConical className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-          <span className="text-xs text-amber-400 font-medium">
-            Demo Mode — Showing illustrative data. Connect to live backend for real metrics.
-          </span>
-        </div>
-      )}
     <div className="h-20 border-b border-white/10 bg-eco-dark/50 backdrop-blur-md flex items-center justify-between px-8">
       <div className="relative w-96">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
