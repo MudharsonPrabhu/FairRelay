@@ -39,7 +39,8 @@ export function TopBar() {
       .toUpperCase() || "AC";
 
   return (
-    <div className="h-20 border-b border-white/10 bg-eco-dark/50 backdrop-blur-md flex items-center justify-between px-8 sticky top-0 z-40 ml-64">
+    <div className="sticky top-0 z-40 ml-[260px]">
+    <div className="h-20 border-b border-white/10 bg-eco-dark/50 backdrop-blur-md flex items-center justify-between px-8">
       <div className="relative w-96">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
         <input
@@ -97,6 +98,7 @@ export function TopBar() {
           <LogOut className="w-5 h-5" />
         </button>
       </div>
+    </div>
     </div>
   );
 }

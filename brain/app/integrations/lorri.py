@@ -58,8 +58,23 @@ def _is_safe_callback_url(url: str) -> bool:
         if parsed.scheme != "https":
             return False
         host = (parsed.hostname or "").lower()
-        blocked_prefixes = ("localhost", "127.", "10.", "192.168.", "169.254.", "0.0.0.0", "::1")
-        return not any(host.startswith(p) for p in blocked_prefixes)
+        if ":" in host:
+            # IPv6: block loopback, link-local, ULA (fc00::/7), IPv4-mapped
+            blocked_ipv6 = ("::1", "fe80:", "fc00:", "fc", "fd", "::ffff:", "::")
+            if any(host.startswith(p) for p in blocked_ipv6):
+                return False
+        else:
+            # IPv4/hostname: block private, loopback, link-local, unspecified
+            # 172.16.0.0/12 covers 172.16–172.31
+            blocked_ipv4 = (
+                "localhost", "127.", "10.", "192.168.", "169.254.", "0.0.0.0", "0.",
+                "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
+                "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+                "172.28.", "172.29.", "172.30.", "172.31.",
+            )
+            if any(host.startswith(p) for p in blocked_ipv4):
+                return False
+        return True
     except Exception:
         return False
 RATE_LIMIT_MAX = 100  # requests per minute
@@ -351,6 +366,46 @@ async def lorri_wellness(request: Request):
 
 # ── Carbon Intelligence Agent ─────────────────────────────────────────────────
 
+# Truck-specific emission factors kg CO₂/km at full load (India road freight, IPCC AR6 + CPCB)
+_TRUCK_EF: Dict[str, float] = {
+    "tata ace gold": 0.12, "tata ace": 0.12,           # Mini LCV ~700 kg GVW
+    "mahindra bolero": 0.14, "mahindra pickup": 0.13,
+    "tata ultra": 0.22, "tata lpt": 0.24,
+    "eicher pro": 0.21, "eicher": 0.21,                 # Medium 3–5T
+    "bharatbenz": 0.26, "ashok leyland": 0.27,          # Heavy 10–12T
+    "tata prima": 0.28,
+    "cng": 0.13, "ev": 0.05, "electric": 0.05,          # Alternative fuel
+}
+# Fuel consumption rate (liters/km at 60% average load, India highways)
+_FUEL_LPK: Dict[str, float] = {
+    "tata ace": 0.083, "tata ace gold": 0.083,  # ~12 km/L
+    "eicher": 0.111, "eicher pro": 0.111,        # ~9 km/L
+    "bharatbenz": 0.125, "tata prima": 0.143,    # ~7–8 km/L
+}
+_DEFAULT_EF          = 0.21     # kg CO₂/km default (medium truck BS4)
+_DEFAULT_FUEL_LPK    = 0.100    # liters/km default (~10 km/L)
+_DIESEL_PRICE_INR    = 92.0     # ₹/liter (India avg May 2025)
+_CARBON_CREDIT_USD_T = 15.0     # $/tonne — Voluntary Carbon Market mid-range
+_USD_INR             = 84.0     # exchange rate
+_TREE_KG_YR          = 21.0     # kg CO₂ absorbed per mature tree per year (IPCC)
+
+
+def _truck_ef(truck_name: str) -> float:
+    tl = (truck_name or "").lower()
+    for k, v in _TRUCK_EF.items():
+        if k in tl:
+            return v
+    return _DEFAULT_EF
+
+
+def _truck_lpk(truck_name: str) -> float:
+    tl = (truck_name or "").lower()
+    for k, v in _FUEL_LPK.items():
+        if k in tl:
+            return v
+    return _DEFAULT_FUEL_LPK
+
+
 class CarbonShipmentInput(BaseModel):
     """A single shipment for carbon estimation."""
     id: str
@@ -385,115 +440,184 @@ class CarbonEstimateRequest(BaseModel):
         return v
 
 
-@router.post("/carbon/estimate")
+@router.post("/carbon/estimate", dependencies=[Depends(verify_api_key)])
 async def lorri_carbon_estimate(request: CarbonEstimateRequest):
     """
-    Carbon Intelligence Agent — per-shipment CO₂ emission estimation for LoRRI.
-
-    No auth required (public computation endpoint — no sensitive data).
+    Carbon Intelligence Agent v2 — per-shipment CO₂ estimation with real monetary impact.
 
     Pipeline:
-      1. Data Ingestion   — validate & normalise shipment payload
-      2. Emission Estimation — CO₂ = dist_km × (weight/capacity) × 0.21 kg/km
-      3. Lane Profiling   — rank corridors by emission intensity
-      4. Opportunity Detection — consolidation, scheduling, vehicle-upgrade actions
-      5. AI Insight Generation — Gemini 2.5 Flash narrative (falls back to rule-based)
+      1. Data Ingestion    — validate & normalise, resolve truck-specific emission factors
+      2. Emission Estimation — CO₂ = dist_km × (weight/capacity) × EF(truck_type)
+      3. Lane Profiling    — rank corridors by emission intensity (g CO₂/tonne-km)
+      4. Opportunity Detection — consolidation, night scheduling, intermodal (>500 km),
+                                  EV suitability (<150 km urban), BS6 upgrade
+      5. AI Insight Generation — Gemini 2.5 Flash with monetary + impact context
 
-    Returns per-shipment figures, high-emission lane list, reduction opportunities,
-    fleet summary, and a natural-language AI insight.
+    Returns per-shipment figures, lane ranking, reduction opportunities with ₹ ROI,
+    enriched fleet summary (fuel saved ₹, trees equivalent, credits INR), and AI insight.
     """
     t0 = time.time()
 
-    EMISSION_FACTOR = 0.21   # kg CO₂ per km at full load (India road freight, IPCC AR6)
-    HIGH_THRESHOLD  = 50.0   # kg CO₂/shipment → HIGH risk
-    MED_THRESHOLD   = 25.0   # kg CO₂/shipment → MEDIUM risk
+    HIGH_THRESHOLD = 50.0   # kg CO₂ → HIGH risk
+    MED_THRESHOLD  = 25.0   # kg CO₂ → MEDIUM risk
 
-    # ── Step 1: Ingest ────────────────────────────────────────────────────────
+    # ── Step 1: Ingest + resolve truck emission factors ───────────────────────
     shipments_in = request.shipments
 
-    # ── Step 2: Emission estimation ───────────────────────────────────────────
+    # ── Step 2: Emission estimation (truck-specific EF) ───────────────────────
     results: List[Dict[str, Any]] = []
     for s in shipments_in:
+        ef       = _truck_ef(s.truck or "")
         lf       = s.weight_kg / max(s.max_kg, 1.0)
-        co2      = round(s.dist_km * lf * EMISSION_FACTOR, 1)
-        baseline = round(s.dist_km * EMISSION_FACTOR, 1)
+        co2      = round(s.dist_km * lf * ef, 1)
+        baseline = round(s.dist_km * ef, 1)      # baseline = full-load trip
         saved    = round(baseline - co2, 1)
-        risk     = "HIGH" if co2 > HIGH_THRESHOLD else "MEDIUM" if co2 > MED_THRESHOLD else "LOW"
+        # Emission intensity: g CO₂ per tonne-km (standard freight KPI)
+        tonne_km    = (s.weight_kg / 1000) * s.dist_km
+        intensity   = round((co2 * 1000) / max(tonne_km, 0.001), 1)  # g/tonne-km
+        # Fuel cost saved vs full-load baseline
+        lpk           = _truck_lpk(s.truck or "")
+        fuel_saved_l  = round(saved / ef * lpk, 2) if ef > 0 else 0.0
+        fuel_saved_inr = round(fuel_saved_l * _DIESEL_PRICE_INR, 0)
+        risk = "HIGH" if co2 > HIGH_THRESHOLD else "MEDIUM" if co2 > MED_THRESHOLD else "LOW"
         results.append({
             "id": s.id, "lane": s.lane,
             "dist_km": s.dist_km, "weight_kg": s.weight_kg, "max_kg": s.max_kg,
-            "truck": s.truck,
+            "truck": s.truck, "emission_factor": ef,
             "load_factor_pct": round(lf * 100),
             "co2_kg": co2, "co2_baseline_kg": baseline, "co2_saved_kg": saved,
+            "co2_intensity_g_tkm": intensity,
+            "fuel_saved_liters": fuel_saved_l,
+            "fuel_saved_inr": int(fuel_saved_inr),
             "risk": risk,
         })
 
-    # ── Step 3: Lane profiling ────────────────────────────────────────────────
+    # ── Step 3: Lane profiling (emission intensity ranking) ───────────────────
     lanes_sorted = sorted(results, key=lambda x: x["co2_kg"], reverse=True)
     high_emission_lanes = [
-        {"lane": r["lane"], "co2_kg": r["co2_kg"], "risk": r["risk"]}
+        {"lane": r["lane"], "co2_kg": r["co2_kg"], "risk": r["risk"],
+         "intensity_g_tkm": r["co2_intensity_g_tkm"]}
         for r in lanes_sorted
     ]
 
     # ── Step 4: Opportunity detection ─────────────────────────────────────────
     opps: List[Dict[str, Any]] = []
     for r in results:
-        if r["load_factor_pct"] < 70:
-            saving = round(r["co2_saved_kg"] * 0.4, 1)
+        # Consolidation: load < 75%
+        if r["load_factor_pct"] < 75:
+            saving_kg  = round(r["co2_saved_kg"] * 0.45, 1)
+            saving_inr = round(saving_kg / max(r["co2_kg"], 0.01) * r["fuel_saved_inr"] * 0.45)
             opps.append({
                 "lane": r["lane"], "type": "consolidation",
                 "finding": (
-                    f"Load factor {r['load_factor_pct']}% — consolidation opportunity. "
-                    f"Estimated saving: {saving} kg CO₂/run."
+                    f"Load factor {r['load_factor_pct']}% — merging with a co-shipper saves "
+                    f"{saving_kg} kg CO₂/run and ~₹{saving_inr:,} fuel cost."
                 ),
-                "saving_kg": saving, "effort": "Low",
+                "saving_kg": saving_kg,
+                "saving_inr": int(saving_inr),
+                "effort": "Low",
             })
+
+        # Night-window scheduling: HIGH-risk corridors
         if r["risk"] == "HIGH":
-            saving = round(r["co2_kg"] * 0.12, 1)
+            saving_kg  = round(r["co2_kg"] * 0.12, 1)
+            saving_inr = round(r["fuel_saved_inr"] * 0.12)
             opps.append({
                 "lane": r["lane"], "type": "scheduling",
                 "finding": (
-                    f"Night-window dispatch (22:00–05:00) reduces fuel burn ~12% → "
-                    f"saves {saving} kg CO₂."
+                    f"Night dispatch 22:00–05:00 cuts fuel burn 12% on congested corridor → "
+                    f"{saving_kg} kg CO₂ and ~₹{saving_inr:,} saved per run."
                 ),
-                "saving_kg": saving, "effort": "Low",
+                "saving_kg": saving_kg,
+                "saving_inr": int(saving_inr),
+                "effort": "Low",
             })
 
-    # Vehicle upgrade for top emitter
+        # Intermodal shift: road→rail for >500 km corridors
+        if r["dist_km"] > 500:
+            saving_kg  = round(r["co2_kg"] * 0.70, 1)   # rail ~70% lower than road
+            saving_inr = round(saving_kg / max(r["co2_kg"], 0.01) * r["fuel_saved_inr"] * 0.70)
+            opps.append({
+                "lane": r["lane"], "type": "intermodal",
+                "finding": (
+                    f"Long-haul {r['dist_km']} km corridor: rail freight cuts CO₂ 70% → "
+                    f"{saving_kg} kg saved. Indian Railways connects this corridor via wagon-load booking."
+                ),
+                "saving_kg": saving_kg,
+                "saving_inr": int(saving_inr),
+                "effort": "Medium",
+            })
+
+        # EV suitability: urban/short-haul <150 km
+        if r["dist_km"] < 150 and r["dist_km"] > 8:
+            saving_kg  = round(r["co2_kg"] * 0.76, 1)   # EV ~76% lower than diesel LCV
+            saving_inr = round(r["co2_kg"] * 0.76 / max(r["co2_kg"], 0.01) * r["fuel_saved_inr"] * 0.76)
+            opps.append({
+                "lane": r["lane"], "type": "ev_route",
+                "finding": (
+                    f"Short-haul {r['dist_km']} km route is ideal for electric LCV (Tata Ace EV / Euler HiLoad). "
+                    f"EV saves {saving_kg} kg CO₂ and eliminates ₹{int(r['fuel_saved_inr'] + saving_inr):,} diesel cost per cycle."
+                ),
+                "saving_kg": saving_kg,
+                "saving_inr": int(saving_inr),
+                "effort": "High",
+            })
+
+    # BS6 vehicle upgrade for top emitter (only if it's not already EV/CNG)
     if results:
-        top    = max(results, key=lambda x: x["co2_kg"])
-        saving = round(top["co2_kg"] * 0.238, 1)   # 0.21 → 0.16 kg/km = 23.8% drop
-        opps.append({
-            "lane": top["lane"], "type": "vehicle_upgrade",
-            "finding": (
-                f"Upgrade to BS6 Euro-6 equivalent (emission factor 0.21→0.16 kg/km) "
-                f"saves {saving} kg CO₂ on highest-emission corridor."
-            ),
-            "saving_kg": saving, "effort": "Medium",
-        })
+        top = max(results, key=lambda x: x["co2_kg"])
+        if top["emission_factor"] >= 0.20:
+            saving_kg  = round(top["co2_kg"] * 0.238, 1)   # 0.21→0.16 = 23.8% drop
+            saving_inr = round(saving_kg / max(top["co2_kg"], 0.01) * top["fuel_saved_inr"] * 0.238)
+            opps.append({
+                "lane": top["lane"], "type": "vehicle_upgrade",
+                "finding": (
+                    f"Upgrade {top['truck']} to BS6 equivalent (EF 0.21→0.16 kg/km) — "
+                    f"saves {saving_kg} kg CO₂ and ~₹{saving_inr:,}/run on the highest-emission corridor."
+                ),
+                "saving_kg": saving_kg,
+                "saving_inr": int(saving_inr),
+                "effort": "Medium",
+            })
 
-    opps = sorted(opps, key=lambda x: x["saving_kg"], reverse=True)[:5]
+    opps = sorted(opps, key=lambda x: x["saving_kg"], reverse=True)[:6]
 
-    # ── Step 5: AI insight (Gemini 2.5 Flash via botlearn.ai) ─────────────────
-    total_co2   = round(sum(r["co2_kg"]          for r in results), 1)
-    total_base  = round(sum(r["co2_baseline_kg"] for r in results), 1)
-    total_saved = round(total_base - total_co2, 1)
-    savings_pct = round((total_saved / max(total_base, 1)) * 100, 1)
-    high_count  = sum(1 for r in results if r["risk"] == "HIGH")
+    # ── Step 5: Build enriched summary ────────────────────────────────────────
+    total_co2      = round(sum(r["co2_kg"]          for r in results), 1)
+    total_base     = round(sum(r["co2_baseline_kg"] for r in results), 1)
+    total_saved    = round(total_base - total_co2, 1)
+    savings_pct    = round((total_saved / max(total_base, 1)) * 100, 1)
+    high_count     = sum(1 for r in results if r["risk"] == "HIGH")
+    total_fuel_l   = round(sum(r["fuel_saved_liters"] for r in results), 1)
+    total_fuel_inr = int(sum(r["fuel_saved_inr"]   for r in results))
+    credit_usd     = round(total_saved / 1000 * _CARBON_CREDIT_USD_T, 2)
+    credit_inr     = int(credit_usd * _USD_INR)
+    trees_equiv    = int(total_saved / _TREE_KG_YR)
+    fleet_eff_pct  = round((1 - total_co2 / max(total_base, 1)) * 100, 1)
+    # Emission intensity: total gCO₂ per tonne-km
+    total_tonne_km = sum((r["weight_kg"] / 1000) * r["dist_km"] for r in results)
+    emit_intensity = round((total_co2 * 1000) / max(total_tonne_km, 0.001), 1)  # g/tonne-km
 
+    # ── Step 6: AI insight (Gemini 2.5 Flash via botlearn.ai) ─────────────────
     ai_insight: Optional[str] = None
     gemini_key = os.getenv("BOTLEARN_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
     if gemini_key:
+        top_opps = [o["lane"] + " (" + o["type"] + ")" for o in opps[:3]]
+        prompt = (
+            f"You are a sustainability AI for Indian road freight logistics. "
+            f"Fleet analysis: {len(results)} shipments, {total_co2:.1f} kg total CO₂, "
+            f"{total_saved:.1f} kg saved vs full-load baseline ({savings_pct}% efficiency gain). "
+            f"Fleet efficiency: {fleet_eff_pct}%. Emission intensity: {emit_intensity} g CO₂/tonne-km. "
+            f"Fuel savings: ₹{total_fuel_inr:,} ({total_fuel_l:.0f} liters). "
+            f"Carbon credits: ${credit_usd:.2f} (₹{credit_inr:,}). "
+            f"Trees equivalent: {trees_equiv} trees/year. "
+            f"High-risk corridors ({high_count}): {[r['lane'] for r in results if r['risk'] == 'HIGH']}. "
+            f"Top reduction opportunities: {top_opps}. "
+            f"Write 2 sentences of specific, actionable insight for a logistics operations manager in India. "
+            f"Mention real monetary or tonne figures. No markdown, no bullet points."
+        )
         try:
-            prompt = (
-                f"You are a carbon analytics AI for Indian road freight. "
-                f"Fleet: {len(results)} shipments, {total_co2} kg total CO₂, "
-                f"{total_saved} kg saved vs full-load baseline ({savings_pct}% reduction). "
-                f"High-risk lanes: {[r['lane'] for r in results if r['risk'] == 'HIGH']}. "
-                f"Write exactly 2 sentences of actionable insight for a logistics manager. "
-                f"Be specific about India freight. No markdown, no bullet points."
-            )
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.post(
                     "https://api.botlearn.ai/v1/chat/completions",
@@ -504,7 +628,7 @@ async def lorri_carbon_estimate(request: CarbonEstimateRequest):
                     json={
                         "model": "gemini-2.5-flash",
                         "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": 130,
+                        "max_tokens": 150,
                     },
                 )
                 if resp.status_code == 200:
@@ -513,12 +637,12 @@ async def lorri_carbon_estimate(request: CarbonEstimateRequest):
             logger.warning(f"Carbon AI insight skipped: {exc}")
 
     if not ai_insight:
-        corridor_label = f"{high_count} high-risk corridor{'s' if high_count != 1 else ''}"
+        top_action = opps[0]["finding"] if opps else "review high-load corridors"
         ai_insight = (
-            f"Fleet is emitting {total_co2} kg CO₂ across {len(results)} active shipments — "
-            f"{total_saved} kg ({savings_pct}%) saved vs full-load baseline. "
-            f"{corridor_label} flagged: consolidation of low-load lanes and night-window dispatch "
-            f"are the highest-ROI reduction actions available today."
+            f"Fleet emitting {total_co2} kg CO₂ across {len(results)} shipments at "
+            f"{emit_intensity} g/tonne-km — saving {total_saved} kg ({savings_pct}%) vs "
+            f"full-load baseline, equivalent to {trees_equiv} trees/year and ₹{total_fuel_inr:,} fuel savings. "
+            f"Priority action: {top_action}"
         )
 
     latency_ms = int((time.time() - t0) * 1000)
@@ -526,26 +650,35 @@ async def lorri_carbon_estimate(request: CarbonEstimateRequest):
     return {
         "success": True,
         "data": {
-            "date":                  request.date or datetime.utcnow().strftime("%Y-%m-%d"),
-            "shipments":             results,
-            "highEmissionLanes":     high_emission_lanes,
+            "date":                   request.date or datetime.utcnow().strftime("%Y-%m-%d"),
+            "shipments":              results,
+            "highEmissionLanes":      high_emission_lanes,
             "reductionOpportunities": opps,
             "summary": {
-                "totalCo2Kg":      total_co2,
-                "baselineCo2Kg":   total_base,
-                "savedCo2Kg":      total_saved,
-                "savingsPct":      savings_pct,
-                "highRiskCount":   high_count,
-                "carbonCreditUSD": round(total_saved * 0.015, 2),
-                "shipmentCount":   len(results),
+                "totalCo2Kg":        total_co2,
+                "baselineCo2Kg":     total_base,
+                "savedCo2Kg":        total_saved,
+                "savingsPct":        savings_pct,
+                "highRiskCount":     high_count,
+                "carbonCreditUSD":   credit_usd,
+                "carbonCreditINR":   credit_inr,
+                "shipmentCount":     len(results),
+                "fuelSavedLiters":   total_fuel_l,
+                "fuelSavedINR":      total_fuel_inr,
+                "treesEquivalent":   trees_equiv,
+                "fleetEfficiencyPct": fleet_eff_pct,
+                "emissionIntensity": emit_intensity,  # g CO₂/tonne-km
             },
             "aiInsight": ai_insight,
         },
         "meta": {
-            "model":          "CO₂ = dist_km × (weight/capacity) × 0.21 kg/km",
-            "emissionFactor": EMISSION_FACTOR,
-            "latency_ms":     latency_ms,
-            "agent":          "CarbonIntelligenceAgent/1.0",
+            "model":          "CO₂ = dist_km × (weight/capacity) × EF(truck_type)",
+            "emissionFactors": _TRUCK_EF,
+            "defaultEF":       _DEFAULT_EF,
+            "dieselPriceINR":  _DIESEL_PRICE_INR,
+            "carbonCreditRate": f"${_CARBON_CREDIT_USD_T}/tonne (VCM)",
+            "latency_ms":      latency_ms,
+            "agent":           "CarbonIntelligenceAgent/2.0",
         },
     }
 

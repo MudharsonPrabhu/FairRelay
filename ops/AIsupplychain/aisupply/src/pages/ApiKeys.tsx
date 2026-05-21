@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Key, Plus, Copy, Trash2, Zap, Shield, Clock, Check } from 'lucide-react';
+import { Key, Plus, Copy, Trash2, Zap, Shield, Clock, Check, AlertTriangle } from 'lucide-react';
+import apiClient from '../services/apiClient';
 
 interface ApiKey {
   id: string;
@@ -22,17 +23,14 @@ export function ApiKeys() {
   const [showForm, setShowForm] = useState(false);
   const [newKey, setNewKey] = useState<NewKey | null>(null);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchKeys = async () => {
     try {
-      const res = await fetch('/api/keys?userId=demo-user');
-      const data = await res.json();
+      const { data } = await apiClient.get('/keys');
       setKeys(data);
     } catch {
-      setKeys([
-        { id: 'seed-001', name: 'Production Key', keyPreview: 'fr_live_••••••••', createdAt: new Date(Date.now() - 86400000 * 3).toISOString(), lastUsed: new Date().toISOString(), active: true },
-        { id: 'seed-002', name: 'Development Key', keyPreview: 'fr_live_••••••••', createdAt: new Date(Date.now() - 86400000 * 7).toISOString(), lastUsed: null, active: true },
-      ]);
+      setKeys([]);
     } finally {
       setLoading(false);
     }
@@ -43,29 +41,16 @@ export function ApiKeys() {
   const createKey = async () => {
     if (!newKeyName.trim()) return;
     setCreating(true);
+    setError(null);
     try {
-      const res = await fetch('/api/keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newKeyName, userId: 'demo-user' }),
-      });
-      const data: NewKey = await res.json();
+      const { data } = await apiClient.post<NewKey>('/keys', { name: newKeyName });
       setNewKey(data);
       setNewKeyName('');
       setShowForm(false);
       fetchKeys();
-    } catch {
-      const raw = Math.random().toString(36).substring(2, 14) + Math.random().toString(36).substring(2, 14);
-      const demoKey: NewKey = {
-        id: `demo-${Date.now()}`, name: newKeyName,
-        key: `fr_live_${raw}`,
-        keyPreview: 'fr_live_••••••••',
-        createdAt: new Date().toISOString(), lastUsed: null, active: true,
-      };
-      setNewKey(demoKey);
-      setNewKeyName('');
-      setShowForm(false);
-      setKeys(k => [demoKey, ...k]);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || 'Failed to create API key. Check backend connection.';
+      setError(msg);
     } finally {
       setCreating(false);
     }
@@ -73,7 +58,7 @@ export function ApiKeys() {
 
   const revokeKey = async (id: string) => {
     if (!confirm('Revoke this key? Apps using it will stop working immediately.')) return;
-    try { await fetch(`/api/keys/${id}`, { method: 'DELETE' }); } catch {}
+    try { await apiClient.delete(`/keys/${id}`); } catch {}
     setKeys(k => k.filter(key => key.id !== id));
   };
 
@@ -125,6 +110,15 @@ export function ApiKeys() {
             </div>
           </div>
           <button onClick={() => setNewKey(null)} className="text-eco-text-secondary hover:text-white text-sm transition-colors">✕</button>
+        </div>
+      )}
+
+      {/* Error banner */}
+      {error && (
+        <div className="mb-4 p-3 rounded-xl border border-red-500/30 bg-red-500/5 flex items-center gap-3">
+          <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+          <span className="text-sm text-red-300 flex-1">{error}</span>
+          <button onClick={() => setError(null)} className="text-red-400/60 hover:text-red-400 transition-colors text-sm">✕</button>
         </div>
       )}
 

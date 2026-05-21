@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { CheckCircle, XCircle, AlertCircle, Clock, Repeat2, Star, Brain } from "lucide-react";
 import { AbsorptionMap } from "../components/AbsorptionMap";
 import { useToast } from "../context/ToastContext";
 import {
@@ -10,24 +10,14 @@ import {
 
 // ── Mock data shown when backend is offline ────────────────────────────────────
 const MOCK_REQUESTS = [
-  {
-    id: 'abs-001', displayId: 'ABS-001', status: 'PENDING',
-    truck1: 'MH-12-AB-1234', truck2: 'KA-05-XY-9876',
-    weight: '2.4T', type: 'BACKHAUL', priority: 'HIGH',
-    distanceSaved: 47, carbonSaved: 18.6,
-  },
-  {
-    id: 'abs-002', displayId: 'ABS-002', status: 'PENDING',
-    truck1: 'DL-01-GH-5678', truck2: 'MH-43-PQ-3322',
-    weight: '1.1T', type: 'PARTIAL', priority: 'MEDIUM',
-    distanceSaved: 23, carbonSaved: 9.2,
-  },
-  {
-    id: 'abs-003', displayId: 'ABS-003', status: 'PENDING',
-    truck1: 'TN-09-CD-4411', truck2: 'AP-28-MN-7755',
-    weight: '3.0T', type: 'FULL', priority: 'HIGH',
-    distanceSaved: 61, carbonSaved: 24.4,
-  },
+  { id: 'abs-001', displayId: 'ABS-001', status: 'PENDING',     truck1: 'MH-12-AB-1234', truck2: 'KA-05-XY-9876', weight: '2.4T', type: 'BACKHAUL', priority: 'HIGH',   distanceSaved: 47, carbonSaved: 18.6, route: 'Mumbai → Pune' },
+  { id: 'abs-002', displayId: 'ABS-002', status: 'PENDING',     truck1: 'DL-01-GH-5678', truck2: 'MH-43-PQ-3322', weight: '1.1T', type: 'PARTIAL',  priority: 'MEDIUM', distanceSaved: 23, carbonSaved: 9.2,  route: 'Delhi → Jaipur' },
+  { id: 'abs-003', displayId: 'ABS-003', status: 'PENDING',     truck1: 'TN-09-CD-4411', truck2: 'AP-28-MN-7755', weight: '3.0T', type: 'FULL',     priority: 'HIGH',   distanceSaved: 61, carbonSaved: 24.4, route: 'Chennai → Bangalore' },
+  { id: 'abs-004', displayId: 'ABS-004', status: 'IN_TRANSIT',  truck1: 'GJ-05-BC-7731', truck2: 'RJ-14-KL-4422', weight: '1.8T', type: 'BACKHAUL', priority: 'MEDIUM', distanceSaved: 35, carbonSaved: 13.9, route: 'Surat → Ahmedabad' },
+  { id: 'abs-005', displayId: 'ABS-005', status: 'IN_TRANSIT',  truck1: 'KA-01-MN-8855', truck2: 'TN-07-PQ-2211', weight: '2.2T', type: 'PARTIAL',  priority: 'LOW',    distanceSaved: 28, carbonSaved: 11.1, route: 'Mysore → Salem' },
+  { id: 'abs-006', displayId: 'ABS-006', status: 'AWAITING',    truck1: 'MH-02-XY-9944', truck2: 'MH-12-AB-3366', weight: '0.9T', type: 'FULL',     priority: 'HIGH',   distanceSaved: 19, carbonSaved: 7.6,  route: 'Thane → Nashik' },
+  { id: 'abs-007', displayId: 'ABS-007', status: 'COMPLETED',   truck1: 'UP-80-GH-1122', truck2: 'HR-26-CD-7789', weight: '3.5T', type: 'BACKHAUL', priority: 'HIGH',   distanceSaved: 82, carbonSaved: 32.8, route: 'Noida → Gurugram' },
+  { id: 'abs-008', displayId: 'ABS-008', status: 'COMPLETED',   truck1: 'WB-06-EF-3344', truck2: 'BR-01-MN-6677', weight: '1.4T', type: 'PARTIAL',  priority: 'MEDIUM', distanceSaved: 44, carbonSaved: 17.6, route: 'Kolkata → Patna' },
 ];
 
 const MOCK_DRIVERS = [
@@ -35,33 +25,36 @@ const MOCK_DRIVERS = [
   { id: 'd2', name: 'Priya Sharma', vehicleType: 'ELECTRIC', rating: 4.9 },
 ];
 
+const STATUS_TABS = [
+  { key: 'PENDING',    label: 'Pending',      Icon: Clock,      color: 'text-amber-400',  bg: 'bg-amber-500/10',   border: 'border-amber-500/30' },
+  { key: 'IN_TRANSIT', label: 'In Transit',   Icon: Repeat2,    color: 'text-blue-400',   bg: 'bg-blue-500/10',    border: 'border-blue-500/30'  },
+  { key: 'AWAITING',   label: 'Awaiting Scan',Icon: AlertCircle,color: 'text-orange-400', bg: 'bg-orange-500/10',  border: 'border-orange-500/30'},
+  { key: 'COMPLETED',  label: 'Completed',    Icon: CheckCircle,color: 'text-emerald-400',bg: 'bg-emerald-500/10', border: 'border-emerald-500/30'},
+];
+
 export function AbsorptionRequests() {
   const { showToast } = useToast();
-  const [requests, setRequests] = useState<any[]>([]);
+  const [allRequests, setAllRequests] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<string>('PENDING');
   const [activeRequest, setActiveRequest] = useState<any | null>(null);
   const [recommendedDrivers, setRecommendedDrivers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const requests = allRequests.filter(r => r.status === activeTab);
 
   // Helper to refresh data
   const fetchData = async () => {
     try {
       setLoading(true);
       const requestsData = await getAllRequests();
-
-      // Filter: Show only PENDING absorption opportunities (case-insensitive)
-      const validRequests = requestsData.filter(
-        (r: any) => r.status?.toUpperCase() === "PENDING",
-      );
-
-      setRequests(validRequests.length > 0 ? validRequests : MOCK_REQUESTS);
-
-      const firstRequest = validRequests.length > 0 ? validRequests[0] : MOCK_REQUESTS[0];
-      setActiveRequest(firstRequest);
-
-      if (firstRequest?.id) {
+      const validRequests = requestsData.length > 0 ? requestsData : MOCK_REQUESTS;
+      setAllRequests(validRequests);
+      const firstPending = validRequests.find((r: any) => r.status === 'PENDING') || validRequests[0];
+      setActiveRequest(firstPending || null);
+      if (firstPending?.id) {
         try {
-          const drivers = await getRecommendedDrivers(firstRequest.id);
+          const drivers = await getRecommendedDrivers(firstPending.id);
           setRecommendedDrivers(drivers.length > 0 ? drivers : MOCK_DRIVERS);
         } catch {
           setRecommendedDrivers(MOCK_DRIVERS);
@@ -69,9 +62,7 @@ export function AbsorptionRequests() {
       }
       setError(null);
     } catch (err: any) {
-      // Offline/demo fallback — show mock data instead of error screen
-      console.warn("⚠️ Absorption API offline — using mock data:", err.message);
-      setRequests(MOCK_REQUESTS);
+      setAllRequests(MOCK_REQUESTS);
       setActiveRequest(MOCK_REQUESTS[0]);
       setRecommendedDrivers(MOCK_DRIVERS);
       setError(null);
@@ -86,19 +77,26 @@ export function AbsorptionRequests() {
 
   const handleStatusUpdate = async (action: "APPROVED" | "REJECTED") => {
     if (!activeRequest) return;
+    const newStatus = action === "APPROVED" ? "COMPLETED" : "PENDING";
+    const snapshot = [...allRequests];
+    const remaining = allRequests.filter(r => r.id !== activeRequest.id && r.status === activeTab);
+
     try {
       await updateRequestStatus(activeRequest.id, action);
+      setAllRequests(prev => prev.map(r => r.id === activeRequest.id ? { ...r, status: newStatus } : r));
+      setActiveRequest(remaining[0] || null);
       showToast("Success", `Request ${action === "APPROVED" ? "Approved" : "Rejected"}`, "success");
-      // Remove from local list immediately (demo-safe)
-      setRequests(prev => prev.filter(r => r.id !== activeRequest.id));
-      const remaining = requests.filter(r => r.id !== activeRequest.id);
-      setActiveRequest(remaining[0] || null);
-    } catch {
-      // Demo mode — just update locally
-      showToast("Success", `Request ${action === "APPROVED" ? "Approved ✓" : "Rejected"}`, "success");
-      setRequests(prev => prev.filter(r => r.id !== activeRequest.id));
-      const remaining = requests.filter(r => r.id !== activeRequest.id);
-      setActiveRequest(remaining[0] || null);
+    } catch (err: any) {
+      if (err?.response?.status) {
+        // Real backend error — rollback optimistic update
+        setAllRequests(snapshot);
+        showToast("Error", err.friendlyMessage || "Action failed. Please try again.", "error");
+      } else {
+        // Offline / demo — simulate success without rollback
+        setAllRequests(prev => prev.map(r => r.id === activeRequest.id ? { ...r, status: newStatus } : r));
+        setActiveRequest(remaining[0] || null);
+        showToast("Success", `Request ${action === "APPROVED" ? "Approved" : "Rejected"}`, "success");
+      }
     }
   };
 
@@ -134,16 +132,51 @@ export function AbsorptionRequests() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center text-sm text-eco-text-secondary mb-2">
-        Dashboard <span className="mx-2">&gt;</span>{" "}
-        <span className="text-white font-semibold">Absorption Requests</span>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-orange-500/20 to-amber-500/20 rounded-xl border border-orange-500/30">
+              <Repeat2 className="w-6 h-6 text-orange-400" />
+            </div>
+            Absorption Requests
+          </h1>
+          <p className="text-eco-text-secondary text-sm mt-1">Track and manage load absorption opportunities across fleet</p>
+        </div>
+        {/* Kanban tab counts */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {STATUS_TABS.map(tab => {
+            const count = allRequests.filter(r => r.status === tab.key).length;
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  const first = allRequests.find(r => r.status === tab.key);
+                  setActiveRequest(first || null);
+                }}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
+                  isActive
+                    ? `${tab.bg} ${tab.border} ${tab.color}`
+                    : 'bg-white/3 border-white/8 text-gray-400 hover:text-white hover:border-white/15'
+                }`}
+              >
+                <tab.Icon className="w-3.5 h-3.5" />
+                {tab.label}
+                <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${isActive ? tab.bg : 'bg-white/8'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-140px)]">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-200px)]">
         {/* Requests List */}
         <div className="bg-eco-card rounded-xl border border-eco-card-border p-4 overflow-y-auto custom-scrollbar">
           <h3 className="text-white font-semibold mb-4">
-            Pending Requests ({requests.length})
+            {STATUS_TABS.find(t => t.key === activeTab)?.label} ({requests.length})
           </h3>
           <div className="space-y-3">
             {requests.map((request: any) => (
@@ -163,23 +196,20 @@ export function AbsorptionRequests() {
                     : "border-eco-card-border hover:border-eco-brand-orange/30 hover:bg-eco-secondary/50"
                 }`}
               >
-                <div className="text-sm font-semibold text-eco-brand-orange">
-                  {request.displayId}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-eco-brand-orange">{request.displayId}</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${
+                    request.priority === "HIGH" ? "bg-red-500/20 text-red-400"
+                    : request.priority === "MEDIUM" ? "bg-orange-500/20 text-orange-400"
+                    : "bg-gray-500/20 text-gray-400"
+                  }`}>{request.priority || "MEDIUM"}</span>
                 </div>
-                <div className="text-xs text-gray-400 mt-1">
-                  {request.truck1 || "Truck 1"} → {request.truck2 || "Truck 2"}
-                </div>
-                <div className="text-xs text-white mt-1">
-                  Weight: {request.weight}
-                </div>
-                <div
-                  className={`text-xs mt-2 px-2 py-0.5 rounded w-fit ${
-                    request.priority === "HIGH"
-                      ? "bg-red-500/20 text-red-400"
-                      : "bg-orange-500/20 text-orange-400"
-                  }`}
-                >
-                  {request.priority || "MEDIUM"}
+                <div className="text-xs text-white font-medium mt-1">{request.route || `${request.truck1} → ${request.truck2}`}</div>
+                <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+                  <span>{request.weight}</span>
+                  <span>·</span>
+                  <span>{request.type}</span>
+                  {request.distanceSaved && <><span>·</span><span className="text-emerald-400">↓{request.distanceSaved}km</span></>}
                 </div>
               </div>
             ))}
@@ -278,16 +308,25 @@ export function AbsorptionRequests() {
             {recommendedDrivers.length > 0 && (
               <div className="bg-eco-card rounded-xl border border-eco-card-border p-4">
                 <h4 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
-                  <span className="text-eco-brand-orange">🤖</span> AI Recommended Drivers
+                  <Brain className="w-4 h-4 text-violet-400" />
+                  AI Recommended Drivers
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/25">AI</span>
                 </h4>
                 <div className="space-y-2">
                   {recommendedDrivers.slice(0, 3).map((driver: any) => (
-                    <div key={driver.id} className="flex items-center justify-between bg-eco-secondary/40 px-3 py-2 rounded-lg">
-                      <span className="text-white text-sm font-medium">{driver.name}</span>
+                    <div key={driver.id} className="flex items-center justify-between bg-eco-secondary/40 px-3 py-2 rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-eco-text-secondary">{driver.vehicleType}</span>
+                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-orange-600 to-amber-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                          {driver.name?.[0] || 'D'}
+                        </div>
+                        <span className="text-white text-sm font-medium">{driver.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-eco-text-secondary px-1.5 py-0.5 rounded bg-white/5">{driver.vehicleType}</span>
                         {driver.rating && (
-                          <span className="text-xs text-amber-400 font-bold">★ {driver.rating}</span>
+                          <span className="text-xs text-amber-400 font-bold flex items-center gap-0.5">
+                            <Star className="w-3 h-3 fill-current" /> {driver.rating}
+                          </span>
                         )}
                       </div>
                     </div>

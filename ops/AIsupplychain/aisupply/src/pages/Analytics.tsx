@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts';
-import { TrendingUp, TrendingDown, Users, Truck, DollarSign, BarChart2, Award } from 'lucide-react';
+import { TrendingUp, TrendingDown, Users, Truck, DollarSign, BarChart2, Award, Leaf, BarChart3, Brain, Shield } from 'lucide-react';
 
 const volumeData = [
   { name: 'Aug', value: 280, revenue: 120000 },
@@ -59,7 +59,7 @@ function useCountUp(target: number, duration = 1500) {
   return value;
 }
 
-function KpiCard({ title, value, change, negative, icon: Icon, prefix = '', suffix = '' }: any) {
+function KpiCard({ title, value, change, negative, icon: Icon, prefix = '', suffix = '' }: KpiCardProps) {
   const num = useCountUp(typeof value === 'number' ? value : 0);
   return (
     <div className="bg-eco-card rounded-xl p-5 border border-eco-card-border shadow-sm hover:border-eco-brand-orange/30 transition-all">
@@ -83,7 +83,7 @@ function KpiCard({ title, value, change, negative, icon: Icon, prefix = '', suff
   );
 }
 
-const CustomGiniTooltip = ({ active, payload, label }: any) => {
+const CustomGiniTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; payload: { label: string } }>; label?: string }) => {
   if (active && payload?.length) {
     const val = payload[0].value;
     const quality = val < 0.2 ? 'Excellent' : val < 0.4 ? 'Good' : val < 0.6 ? 'Moderate' : 'Poor';
@@ -98,18 +98,49 @@ const CustomGiniTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-import { getDashboardStats } from '../services/apiClient';
+import { getDashboardStats, getDispatchRuns } from '../services/apiClient';
+
+interface DashboardStats {
+  activeShipments?: string | number;
+  dispatchRuns?: number;
+  activeDrivers?: string | number;
+  totalRevenue?: number;
+  giniIndex?: number;
+  co2Avoided?: number;
+}
+
+interface KpiCardProps {
+  title: string;
+  value: number | string;
+  change: string;
+  negative?: boolean;
+  icon: React.ElementType;
+  prefix?: string;
+  suffix?: string;
+}
 
 export function Analytics() {
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [giniData, setGiniData] = useState(giniTrend);
 
   useEffect(() => {
     getDashboardStats()
       .then(data => setStats(data))
-      .catch(() => setStats(null)); // graceful fallback to static values
+      .catch(() => setStats(null));
+    getDispatchRuns().then((res: any) => {
+      const list: any[] = Array.isArray(res) ? res : res?.runs || res?.data || [];
+      if (list.length >= 2) {
+        const mapped = list.slice(-6).map((run: any, i: number) => ({
+          month: new Date(run.created_at || run.createdAt || Date.now()).toLocaleString('default', { month: 'short' }),
+          gini: run.gini_index ?? run.giniIndex ?? run.global_fairness?.gini_index ?? 0.12,
+          label: i === 0 ? 'Earliest' : i === list.length - 1 ? 'Latest' : `Run ${i + 1}`,
+        }));
+        setGiniData(mapped);
+      }
+    }).catch(() => {});
   }, []);
 
-  const activeShipments = useCountUp(stats?.activeShipments ? parseInt(stats.activeShipments) : 1234);
+  const activeShipments = useCountUp(stats?.activeShipments ? Number(stats.activeShipments) : 1234);
   const co2Avoided = useCountUp(142);
 
   return (
@@ -118,12 +149,14 @@ export function Analytics() {
         Dashboard <span className="mx-2">&gt;</span> <span className="text-white font-semibold">Analytics</span>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 6-KPI Strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard title="Total Revenue" value={12400000} prefix="₹" change="+12.5%" icon={DollarSign} />
-        <KpiCard title="Active Shipments" value={stats?.activeShipments ? parseInt(stats.activeShipments) : 1234} change="+8.2%" icon={Truck} />
-        <KpiCard title="AI Dispatches Today" value={stats?.dispatchRuns || 48} change="+14%" icon={BarChart2} />
-        <KpiCard title="Active Drivers" value={stats?.activeDrivers ? parseInt(stats.activeDrivers) : 456} change="+5.3%" icon={Users} />
+        <KpiCard title="Active Shipments" value={stats?.activeShipments ? Number(stats.activeShipments) : 1234} change="+8.2%" icon={Truck} />
+        <KpiCard title="AI Dispatches" value={stats?.dispatchRuns || 48} change="+14%" icon={BarChart2} />
+        <KpiCard title="Active Drivers" value={stats?.activeDrivers ? Number(stats.activeDrivers) : 456} change="+5.3%" icon={Users} />
+        <KpiCard title="Gini Index" value={0.12} change="↓86% vs baseline" negative icon={BarChart3} suffix="" />
+        <KpiCard title="CO₂ Avoided" value={142} change="+18% this month" suffix=" T" icon={Leaf} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -158,7 +191,7 @@ export function Analytics() {
           <h3 className="text-white font-semibold mb-1">Gini Fairness Index Over Time</h3>
           <p className="text-xs text-gray-500 mb-4">Lower = fairer income distribution across drivers</p>
           <ResponsiveContainer width="100%" height="82%">
-            <LineChart data={giniTrend}>
+            <LineChart data={giniData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2438" vertical={false} />
               <XAxis dataKey="month" stroke="#4B5563" tickLine={false} axisLine={false} dy={10} fontSize={11} />
               <YAxis stroke="#4B5563" tickLine={false} axisLine={false} dx={-5} fontSize={11} domain={[0, 1]} tickFormatter={v => v.toFixed(1)} />
@@ -190,29 +223,31 @@ export function Analytics() {
         <div className="bg-eco-card rounded-xl border border-eco-card-border p-6 h-[320px] flex flex-col">
           <h3 className="text-white font-semibold mb-1">Delivery Performance</h3>
           <p className="text-xs text-gray-500 mb-4">On-time delivery rate by status</p>
-          <div className="flex-1 flex items-center relative">
-            <ResponsiveContainer width="60%" height="100%">
-              <PieChart>
-                <Pie data={pieData} innerRadius={55} outerRadius={75} paddingAngle={4} dataKey="value" startAngle={90} endAngle={450}>
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ backgroundColor: '#0f1117', borderColor: '#1e2438', color: '#fff', borderRadius: 8 }} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute left-[15%] top-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
-              <span className="text-3xl font-bold text-white">78%</span>
-              <span className="text-xs text-gray-400">On Time</span>
+          <div className="flex-1 flex items-center gap-6">
+            {/* Chart + centered label — label is relative to this wrapper, not the row */}
+            <div className="relative w-44 h-44 flex-shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} innerRadius={52} outerRadius={72} paddingAngle={3} dataKey="value" startAngle={90} endAngle={450}>
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ backgroundColor: '#0f1117', borderColor: '#1e2438', color: '#fff', borderRadius: 8 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-2xl font-bold font-data text-white leading-none">78%</span>
+                <span className="text-xs text-gray-400 mt-1">On Time</span>
+              </div>
             </div>
-            <div className="flex-1 space-y-3 pl-4">
+            {/* Legend */}
+            <div className="flex-1 space-y-4">
               {pieData.map(d => (
-                <div key={d.name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
-                    <span className="text-xs text-gray-400">{d.name}</span>
-                  </div>
-                  <span className="text-xs font-bold text-white">{d.value}%</span>
+                <div key={d.name} className="flex items-center gap-3">
+                  <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
+                  <span className="text-sm text-gray-300 flex-1">{d.name}</span>
+                  <span className="text-sm font-bold font-data text-white">{d.value}%</span>
                 </div>
               ))}
             </div>
@@ -228,14 +263,16 @@ export function Analytics() {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { label: 'CO₂ Avoided', value: `${co2Avoided} Tons`, sub: 'via route optimization', icon: '🌿', color: 'text-green-400' },
-            { label: 'Income Equality', value: '±12%', sub: 'driver earnings variance (was ±340%)', icon: '⚖️', color: 'text-emerald-400' },
-            { label: 'Gini Reduction', value: '86%', sub: '0.85 → 0.12 this quarter', icon: '📉', color: 'text-orange-400' },
-            { label: 'AI Dispatches', value: `${activeShipments.toLocaleString()}`, sub: 'fair allocations run', icon: '🤖', color: 'text-blue-400' },
+            { label: 'CO₂ Avoided', value: `${co2Avoided} T`, sub: 'via route optimization', Icon: Leaf, color: 'text-green-400', bg: 'bg-green-500/10' },
+            { label: 'Income Equality', value: '±12%', sub: 'earnings variance (was ±340%)', Icon: Shield, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+            { label: 'Gini Reduction', value: '86%', sub: '0.85 → 0.12 this quarter', Icon: BarChart3, color: 'text-orange-400', bg: 'bg-orange-500/10' },
+            { label: 'AI Dispatches', value: `${activeShipments.toLocaleString()}`, sub: 'fair allocations run', Icon: Brain, color: 'text-blue-400', bg: 'bg-blue-500/10' },
           ].map((item, i) => (
             <div key={i} className="bg-black/20 rounded-xl p-4 border border-white/5">
-              <p className="text-2xl mb-1">{item.icon}</p>
-              <p className={`text-2xl font-bold ${item.color}`}>{item.value}</p>
+              <div className={`w-8 h-8 rounded-lg ${item.bg} flex items-center justify-center mb-2`}>
+                <item.Icon className={`w-4 h-4 ${item.color}`} />
+              </div>
+              <p className={`text-2xl font-bold font-data ${item.color}`}>{item.value}</p>
               <p className="text-xs text-gray-400 mt-1">{item.label}</p>
               <p className="text-xs text-gray-600 mt-0.5">{item.sub}</p>
             </div>

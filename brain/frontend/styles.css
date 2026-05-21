@@ -11,9 +11,9 @@
     --bg-card-hover: #142639;
     
     /* Accent Colors */
-    --accent-primary: #00d4aa;
-    --accent-secondary: #00b894;
-    --accent-glow: rgba(0, 212, 170, 0.4);
+    --accent-primary: #EA580C;
+    --accent-secondary: #C2410C;
+    --accent-glow: rgba(234, 88, 12, 0.4);
     --accent-blue: #3b82f6;
     --accent-yellow: #fbbf24;
     --accent-purple: #8b5cf6;
@@ -24,11 +24,13 @@
     --text-muted: #64748b;
     
     /* Border Colors */
-    --border-primary: #1e3a5f;
-    --border-accent: #00d4aa;
+    --border-primary: rgba(255, 255, 255, 0.08);
+    /* sidebar width token */
+    --sidebar-w: 240px;
+    --border-accent: #EA580C;
     
     /* Status Colors */
-    --status-active: #00d4aa;
+    --status-active: #EA580C;
     --status-processing: #fbbf24;
     --status-idle: #64748b;
     --status-error: #ef4444;
@@ -71,7 +73,7 @@ body {
     padding: 0 24px;
     position: fixed;
     top: 0;
-    left: 0;
+    left: 240px;
     right: 0;
     z-index: 100;
 }
@@ -201,12 +203,12 @@ body {
 .canvas-container {
     position: fixed;
     top: var(--header-height);
-    left: 0;
+    left: 240px;
     right: 0;
     bottom: var(--footer-height);
     overflow: hidden;
     background: 
-        radial-gradient(ellipse at center, rgba(0, 212, 170, 0.03) 0%, transparent 70%),
+        radial-gradient(ellipse at center, rgba(234, 88, 12, 0.03) 0%, transparent 70%),
         var(--bg-primary);
 }
 
@@ -460,7 +462,7 @@ body {
 .minimap-viewport {
     position: absolute;
     border: 2px solid var(--accent-primary);
-    background: rgba(0, 212, 170, 0.1);
+    background: rgba(234, 88, 12, 0.1);
     border-radius: 4px;
     pointer-events: none;
 }
@@ -485,7 +487,7 @@ body {
 .footer {
     position: fixed;
     bottom: 0;
-    left: 0;
+    left: 240px;
     right: 0;
     height: var(--footer-height);
     background: var(--bg-secondary);
@@ -696,3 +698,119 @@ body {
         font-size: 10px;
     }
 }
+
+/* ============================================
+   Sidebar
+   ============================================ */
+
+.sidebar {
+    width: 240px;
+    height: 100vh;
+    background: #0A0F1C;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 300;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-logo-mark {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #EA580C, #C2410C);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 20px rgba(234, 88, 12, 0.35);
+}
+
+.sidebar-logo-mark svg { width: 18px; height: 18px; color: #fff; }
+
+.sidebar-logo-text {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.02em;
+}
+
+.sidebar-logo-text span { color: #EA580C; }
+
+.sidebar-nav {
+    flex: 1;
+    padding: 16px 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sidebar-section-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #475569;
+    padding: 4px 8px 8px;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #94a3b8;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+}
+
+.sidebar-link svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+.sidebar-link:hover { background: rgba(255, 255, 255, 0.05); color: #e2e8f0; }
+
+.sidebar-link.active {
+    background: linear-gradient(to right, #EA580C, #D97706);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 4px 12px rgba(234, 88, 12, 0.25);
+}
+
+.sidebar-footer {
+    padding: 16px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-user { display: flex; align-items: center; gap: 10px; }
+
+.sidebar-avatar {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, #EA580C, #C2410C);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+}
+
+.sidebar-user-name { font-size: 12px; font-weight: 600; color: #e2e8f0; }
+.sidebar-user-role { font-size: 10px; color: #64748b; }
