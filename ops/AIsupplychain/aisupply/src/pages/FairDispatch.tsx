@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Brain, Zap, Users, Package, TrendingUp, Play, Loader2, CheckCircle, AlertTriangle, Shield, Activity, BarChart3, Download, Moon, Leaf, Code2, ChevronDown, ChevronUp, AlertCircle, FlaskConical } from 'lucide-react';
-import { runFairAllocation, getDispatchHealth, checkDriverWellness } from '../services/apiClient';
+import { runFairAllocation, getDispatchHealth, checkDriverWellness, getAllDrivers } from '../services/apiClient';
 import { CognitivePanel } from '../components/CognitivePanel';
 import { AIInsightCard } from '../components/AIInsightCard';
 
@@ -78,6 +78,7 @@ function CognitiveBadge({ load, state }: { load: number; state: string }) {
 }
 
 export function FairDispatch() {
+  const [liveDrivers, setLiveDrivers] = useState<typeof DEMO_DRIVERS>([]);
   const [isAllocating, setIsAllocating] = useState(false);
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [allocationResult, setAllocationResult] = useState<AllocationResult | null>(null);
@@ -104,18 +105,50 @@ export function FairDispatch() {
     }
   }, [showResults]);
 
+  const DRIVER_COLORS = ['bg-orange-500','bg-emerald-500','bg-blue-500','bg-teal-500','bg-rose-500'] as const;
+
   const checkBrainHealth = async () => {
     try {
       const health = await getDispatchHealth();
-      setBrainStatus(health.brain_status === 'connected' ? 'connected' : 'disconnected');
+      const connected = health.brain_status === 'connected';
+      setBrainStatus(connected ? 'connected' : 'disconnected');
+      if (connected) {
+        try {
+          const res = await getAllDrivers();
+          const drivers: any[] = (res.drivers || res || []).slice(0, 5);
+          if (drivers.length >= 2) {
+            setLiveDrivers(drivers.map((d: any, i: number) => ({
+              id: d.id,
+              name: d.name,
+              hoursToday: 4,
+              hoursSinceRest: 8,
+              isIll: false,
+              totalHours7d: 32,
+              vehicleType: d.vehicle_type || 'DIESEL',
+              homeBaseCity: d.city || 'Mumbai',
+              gender: 'M' as const,
+              wellnessScore: 80,
+              initials: d.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase(),
+              color: DRIVER_COLORS[i % 5],
+              cognitiveLoad: 25,
+              cognitiveState: 'SHARP' as const,
+              stopsToday: 2,
+            })));
+          }
+        } catch {
+          // keep DEMO_DRIVERS
+        }
+      }
     } catch {
       setBrainStatus('disconnected');
     }
   };
 
+  const activeDrivers = liveDrivers.length >= 2 ? liveDrivers : DEMO_DRIVERS;
+
   const runAgentAnimation = async () => {
     try {
-      const result = await checkDriverWellness(DEMO_DRIVERS);
+      const result = await checkDriverWellness(activeDrivers);
       setWellnessData(result);
     } catch {
       setWellnessData({ drivers: DEMO_DRIVERS.map(d => ({ ...d, wellnessStatus: d.wellnessScore >= 70 ? 'FIT' : d.wellnessScore >= 40 ? 'MODERATE' : 'FATIGUED', maxDifficulty: d.wellnessScore >= 70 ? 'ANY' : 'EASY' })) });
@@ -145,7 +178,7 @@ export function FairDispatch() {
   };
 
   const buildDemoResult = (): AllocationResult => ({
-    assignments: DEMO_DRIVERS.map((driver, i) => ({
+    assignments: activeDrivers.map((driver, i) => ({
       driverId: driver.id,
       driverName: driver.name,
       initials: driver.initials,
@@ -190,7 +223,7 @@ export function FairDispatch() {
       const [, apiResult] = await Promise.allSettled([
         runAgentAnimation(),
         runFairAllocation({
-          drivers: DEMO_DRIVERS.map(d => ({
+          drivers: activeDrivers.map(d => ({
             id: d.id, name: d.name,
             hours_today: d.hoursToday,
             hours_since_rest: d.hoursSinceRest,
@@ -212,7 +245,7 @@ export function FairDispatch() {
         const gini = raw?.meta?.gini_index ?? raw?.gini_index ?? 0.12;
         const grade = raw?.meta?.fairness_grade ?? 'A';
         if (apiAllocs.length > 0) {
-          const mapped = DEMO_DRIVERS.map((driver, i) => {
+          const mapped = activeDrivers.map((driver, i) => {
             const alloc = apiAllocs.find((a: any) => a.driver === driver.id) || apiAllocs[i] || {};
             return {
               driverId: driver.id, driverName: driver.name,
@@ -327,7 +360,7 @@ export function FairDispatch() {
       {/* ── Stats Row ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { icon: Users, label: 'Drivers', value: DEMO_DRIVERS.length, color: 'text-blue-400', bg: 'from-blue-500/10' },
+          { icon: Users, label: 'Drivers', value: activeDrivers.length, color: 'text-blue-400', bg: 'from-blue-500/10' },
           { icon: Package, label: 'Packages', value: DEMO_PACKAGES.length, color: 'text-orange-400', bg: 'from-orange-500/10' },
           { icon: BarChart3, label: 'Gini Index', value: giniAnimation.toFixed(2), color: giniAnimation < 0.2 ? 'text-emerald-400' : 'text-amber-400', bg: giniAnimation < 0.2 ? 'from-emerald-500/10' : 'from-amber-500/10' },
           { icon: Shield, label: 'Fairness', value: allocationResult ? `${allocationResult.fairnessMetrics.fairnessScore}%` : '—', color: 'text-emerald-400', bg: 'from-emerald-500/10' },
@@ -349,7 +382,7 @@ export function FairDispatch() {
             <Users className="w-4 h-4 text-blue-400" /> Drivers — Pre-Dispatch Wellness
           </h3>
           <div className="space-y-2">
-            {DEMO_DRIVERS.map(driver => (
+            {activeDrivers.map(driver => (
               <div key={driver.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-white/3 border border-white/5 hover:border-white/10 transition-all">
                 <div className={`w-8 h-8 rounded-full ${driver.color} flex items-center justify-center text-white text-xs font-bold flex-shrink-0`}>
                   {driver.initials}

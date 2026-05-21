@@ -98,7 +98,7 @@ const CustomGiniTooltip = ({ active, payload, label }: { active?: boolean; paylo
   return null;
 };
 
-import { getDashboardStats } from '../services/apiClient';
+import { getDashboardStats, getDispatchRuns } from '../services/apiClient';
 
 interface DashboardStats {
   activeShipments?: string | number;
@@ -121,11 +121,23 @@ interface KpiCardProps {
 
 export function Analytics() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [giniData, setGiniData] = useState(giniTrend);
 
   useEffect(() => {
     getDashboardStats()
       .then(data => setStats(data))
-      .catch(() => setStats(null)); // graceful fallback to static values
+      .catch(() => setStats(null));
+    getDispatchRuns().then((res: any) => {
+      const list: any[] = Array.isArray(res) ? res : res?.runs || res?.data || [];
+      if (list.length >= 2) {
+        const mapped = list.slice(-6).map((run: any, i: number) => ({
+          month: new Date(run.created_at || run.createdAt || Date.now()).toLocaleString('default', { month: 'short' }),
+          gini: run.gini_index ?? run.giniIndex ?? run.global_fairness?.gini_index ?? 0.12,
+          label: i === 0 ? 'Earliest' : i === list.length - 1 ? 'Latest' : `Run ${i + 1}`,
+        }));
+        setGiniData(mapped);
+      }
+    }).catch(() => {});
   }, []);
 
   const activeShipments = useCountUp(stats?.activeShipments ? Number(stats.activeShipments) : 1234);
@@ -179,7 +191,7 @@ export function Analytics() {
           <h3 className="text-white font-semibold mb-1">Gini Fairness Index Over Time</h3>
           <p className="text-xs text-gray-500 mb-4">Lower = fairer income distribution across drivers</p>
           <ResponsiveContainer width="100%" height="82%">
-            <LineChart data={giniTrend}>
+            <LineChart data={giniData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2438" vertical={false} />
               <XAxis dataKey="month" stroke="#4B5563" tickLine={false} axisLine={false} dy={10} fontSize={11} />
               <YAxis stroke="#4B5563" tickLine={false} axisLine={false} dx={-5} fontSize={11} domain={[0, 1]} tickFormatter={v => v.toFixed(1)} />

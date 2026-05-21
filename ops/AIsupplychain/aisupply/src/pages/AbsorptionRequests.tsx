@@ -77,15 +77,27 @@ export function AbsorptionRequests() {
 
   const handleStatusUpdate = async (action: "APPROVED" | "REJECTED") => {
     if (!activeRequest) return;
+    const newStatus = action === "APPROVED" ? "COMPLETED" : "PENDING";
+    const snapshot = [...allRequests];
+    const remaining = allRequests.filter(r => r.id !== activeRequest.id && r.status === activeTab);
+
     try {
       await updateRequestStatus(activeRequest.id, action);
-    } catch {
-      // Demo mode fallback
+      setAllRequests(prev => prev.map(r => r.id === activeRequest.id ? { ...r, status: newStatus } : r));
+      setActiveRequest(remaining[0] || null);
+      showToast("Success", `Request ${action === "APPROVED" ? "Approved" : "Rejected"}`, "success");
+    } catch (err: any) {
+      if (err?.response?.status) {
+        // Real backend error — rollback optimistic update
+        setAllRequests(snapshot);
+        showToast("Error", err.friendlyMessage || "Action failed. Please try again.", "error");
+      } else {
+        // Offline / demo — simulate success without rollback
+        setAllRequests(prev => prev.map(r => r.id === activeRequest.id ? { ...r, status: newStatus } : r));
+        setActiveRequest(remaining[0] || null);
+        showToast("Success", `Request ${action === "APPROVED" ? "Approved" : "Rejected"}`, "success");
+      }
     }
-    showToast("Success", `Request ${action === "APPROVED" ? "Approved" : "Rejected"}`, "success");
-    setAllRequests(prev => prev.map(r => r.id === activeRequest.id ? { ...r, status: action === "APPROVED" ? "COMPLETED" : "PENDING" } : r));
-    const remaining = allRequests.filter(r => r.id !== activeRequest.id && r.status === activeTab);
-    setActiveRequest(remaining[0] || null);
   };
 
 

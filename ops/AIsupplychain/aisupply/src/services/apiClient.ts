@@ -360,6 +360,25 @@ export const getConsolidationDemo = async () => {
   return response.data;
 };
 
+// ====== Route Optimization (direct brain call) ======
+const BRAIN_URL = 'https://fairrelay-brain-gdm1.onrender.com';
+
+export const runRouteOptimize = async (payload: {
+  routes: { id: string; stops: { id: string; latitude: number; longitude: number; weight_kg?: number }[] }[];
+  warehouse_lat: number;
+  warehouse_lng: number;
+  speed_kmh?: number;
+}) => {
+  const res = await fetch(`${BRAIN_URL}/api/v1/routes/optimize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Brain optimize ${res.status}`);
+  return res.json();
+};
+
 // ====== Dynamic Route Insertion ======
 export const dynamicInsertStop = async (payload: {
   route_stops: { id: string; latitude: number; longitude: number }[];
