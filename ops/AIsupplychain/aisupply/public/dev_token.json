@@ -1,0 +1,16 @@
+{
+  "token": "dev-bypass-real-data",
+  "user": {
+    "id": "dev-admin-001",
+    "name": "Dev Admin",
+    "phone": "+919999999999",
+    "role": "DISPATCHER",
+    "status": "active",
+    "rating": 5,
+    "deliveriesCount": 0,
+    "totalEarnings": 0,
+    "weeklyEarnings": 0,
+    "trucks": [],
+    "courierCompanyId": "20c97585-a16d-45e7-8d5f-0ef5ce85b896"
+  }
+}

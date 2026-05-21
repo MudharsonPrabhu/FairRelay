@@ -196,6 +196,15 @@ function runConsolidation(shipments, trucks, options = {}) {
       dropLocation: s.dropLocation,
       weight: s.weight,
       volume: s.volume,
+      // ── Geospatial fields (required for map rendering) ──────────────────
+      pickupLat: s.pickupLat,
+      pickupLng: s.pickupLng,
+      dropLat: s.dropLat,
+      dropLng: s.dropLng,
+      // ── Optional scheduling / priority fields ────────────────────────────
+      priority: s.priority || null,
+      timeWindowStart: s.timeWindowStart || null,
+      timeWindowEnd: s.timeWindowEnd || null,
     })),
     totalWeight: bin.usedWeight,
     totalVolume: bin.usedVolume,

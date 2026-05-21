@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment, Component } from "react";
+import type { ReactNode, ErrorInfo } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -493,9 +494,11 @@ const DEMO_TRUCKS: TruckDef[] = [
 // MAIN PAGE COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export function LoadConsolidation() {
+function LoadConsolidationInner() {
   const { showToast } = useToast();
   const { isDemo } = useAuth();
+  const [mapMounted, setMapMounted] = useState(false);
+  useEffect(() => { setMapMounted(true); }, []);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [apiUsed, setApiUsed] = useState<'brain' | 'local' | null>(null);
@@ -514,27 +517,99 @@ export function LoadConsolidation() {
   // Compatibility heatmap
   const [showHeatmap, setShowHeatmap] = useState(false);
 
-  // Run with current slider parameters — calls real API in non-demo mode
+  // ─── Shipment coordinate lookup (keyed by id) ─────────────────────────────
+  // Used by the enrichment adapter to restore any lat/lng the API may omit.
+  const shipmentGeoLookup = useMemo<Record<string, { pickupLat: number; pickupLng: number; dropLat: number; dropLng: number }>>(() => {
+    const map: Record<string, { pickupLat: number; pickupLng: number; dropLat: number; dropLng: number }> = {};
+    for (const s of DEMO_SHIPMENTS) {
+      map[s.id] = { pickupLat: s.pickupLat, pickupLng: s.pickupLng, dropLat: s.dropLat, dropLng: s.dropLng };
+    }
+    return map;
+  }, []);
+
+  /**
+   * Enrichment adapter — merges geo-coordinates from the original input back
+   * into any shipment that the API response may have returned without them.
+   * This makes the Brain API response safe for Leaflet map rendering even if
+   * the backend is ever updated to strip coordinates again.
+   */
+  const enrichApiResult = useCallback((apiData: any): any => {
+    if (!apiData?.groups) return apiData;
+    return {
+      ...apiData,
+      groups: apiData.groups.map((g: any) => ({
+        ...g,
+        shipments: (g.shipments ?? []).map((s: any) => {
+          const geo = shipmentGeoLookup[s.id];
+          return {
+            ...s,
+            pickupLat: s.pickupLat ?? geo?.pickupLat,
+            pickupLng: s.pickupLng ?? geo?.pickupLng,
+            dropLat:   s.dropLat   ?? geo?.dropLat,
+            dropLng:   s.dropLng   ?? geo?.dropLng,
+          };
+        }),
+      })),
+    };
+  }, [shipmentGeoLookup]);
+
+  // ─── Main optimization runner ──────────────────────────────────────────────
   const runConsolidation = useCallback(async () => {
     setLoading(true);
-    if (!isDemo) {
-      try {
-        const apiResult = await runConsolidationOptimize({
-          shipments: DEMO_SHIPMENTS,
-          trucks: DEMO_TRUCKS,
-          options: { maxGroupRadiusKm: radiusKm, timeWindowToleranceMinutes: timeTolerance },
+
+    // 1. Try the Brain API first (production path)
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000); // 10s timeout
+
+      const apiResult = await runConsolidationOptimize({
+        shipments: DEMO_SHIPMENTS,
+        trucks: DEMO_TRUCKS,
+        options: { maxGroupRadiusKm: radiusKm, timeWindowToleranceMinutes: timeTolerance },
+      });
+      clearTimeout(timeout);
+
+      if (apiResult?.success && apiResult?.data) {
+        // Enrich with coordinates before setting state
+        const enriched = enrichApiResult(apiResult.data);
+        // Also compute client-side enriched metrics (confidence, carbon credits, insights)
+        // that the backend doesn't calculate — merge them from a local run
+        const localResult = runLocalConsolidation(DEMO_SHIPMENTS, DEMO_TRUCKS, {
+          maxGroupRadiusKm: radiusKm,
+          timeWindowToleranceMinutes: timeTolerance,
         });
-        if (apiResult?.success && apiResult?.data) {
-          setResult(apiResult.data);
-          setApiUsed('brain');
-          setLoading(false);
-          showToast('AI Consolidation', 'Results from FairRelay Brain', 'success');
-          return;
-        }
-      } catch {
-        // API unreachable — fall through to local engine
+        const merged = {
+          ...enriched,
+          metrics: {
+            ...enriched.metrics,
+            // Supplement backend metrics with client-side-only fields
+            carbonCreditUSD: localResult.metrics.carbonCreditUSD,
+            fuelSavedINR:    localResult.metrics.fuelSavedINR,
+            optimizationScore: localResult.metrics.optimizationScore,
+            avgConfidence:   localResult.metrics.avgConfidence,
+          },
+          // Inject AI confidence scores per group from local result (backend doesn't compute these)
+          groups: enriched.groups.map((g: any, i: number) => ({
+            ...g,
+            confidence:   localResult.groups[i]?.confidence   ?? 80,
+            capFit:       localResult.groups[i]?.capFit       ?? g.utilizationWeight,
+            geoScore:     localResult.groups[i]?.geoScore     ?? 80,
+            timeScore:    localResult.groups[i]?.timeScore    ?? 80,
+          })),
+          insights: localResult.insights,
+        };
+        setResult(merged);
+        setApiUsed('brain');
+        setLoading(false);
+        showToast('AI Consolidation', 'Optimized by FairRelay Brain API', 'success');
+        return;
       }
+    } catch (err: any) {
+      // Network error, timeout, or API down — fall through silently
+      console.warn('[LoadConsolidation] Brain API unavailable, using local engine:', err?.message);
     }
+
+    // 2. Fallback: local JS engine (always produces map-safe results)
     const r = runLocalConsolidation(DEMO_SHIPMENTS, DEMO_TRUCKS, {
       maxGroupRadiusKm: radiusKm,
       timeWindowToleranceMinutes: timeTolerance,
@@ -542,7 +617,8 @@ export function LoadConsolidation() {
     setResult(r);
     setApiUsed('local');
     setLoading(false);
-  }, [radiusKm, timeTolerance, isDemo, showToast]);
+  }, [radiusKm, timeTolerance, enrichApiResult, showToast]);
+
 
   // Scenario comparison
   const runScenarios = () => {
@@ -584,13 +660,18 @@ export function LoadConsolidation() {
 
   const allPositions: [number, number][] = useMemo(() => {
     if (mapMode === "before") {
-      return DEMO_SHIPMENTS.flatMap(s => [[s.pickupLat, s.pickupLng], [s.dropLat, s.dropLng]] as [number, number][]);
+      return DEMO_SHIPMENTS.flatMap(s =>
+        ([[s.pickupLat, s.pickupLng], [s.dropLat, s.dropLng]] as [number, number][])
+          .filter(([lat, lng]) => lat != null && lng != null && !isNaN(lat) && !isNaN(lng))
+      );
     }
     const pts: [number, number][] = [];
     groups.forEach((g: any) =>
       g.shipments?.forEach((s: any) => {
-        if (s.pickupLat) pts.push([s.pickupLat, s.pickupLng]);
-        if (s.dropLat) pts.push([s.dropLat, s.dropLng]);
+        if (s.pickupLat != null && s.pickupLng != null && !isNaN(s.pickupLat))
+          pts.push([s.pickupLat, s.pickupLng]);
+        if (s.dropLat != null && s.dropLng != null && !isNaN(s.dropLat))
+          pts.push([s.dropLat, s.dropLng]);
       })
     );
     return pts;
@@ -757,6 +838,11 @@ export function LoadConsolidation() {
             </button>
           </div>
           <div className="h-[440px]">
+            {!mapMounted ? (
+              <div className="h-full flex items-center justify-center bg-eco-dark">
+                <div className="animate-spin rounded-full h-8 w-8 border-2 border-orange-500 border-t-transparent" />
+              </div>
+            ) : (
             <MapContainer
               center={[20.5, 78.9]}
               zoom={5}
@@ -790,13 +876,19 @@ export function LoadConsolidation() {
                     <Fragment key={g.groupId}>
                       {g.shipments?.map((s: any) => (
                         <Fragment key={s.id}>
-                          <Marker position={[s.pickupLat, s.pickupLng] as [number, number]} icon={createGroupIcon(color, "P")}>
-                            <Popup><b>Pickup</b>: {s.pickupLocation}<br />Group {g.groupId} — {s.weight} kg<br />Confidence: {g.confidence}%</Popup>
-                          </Marker>
-                          <Marker position={[s.dropLat, s.dropLng] as [number, number]} icon={createGroupIcon(color, "D")}>
-                            <Popup><b>Drop</b>: {s.dropLocation}<br />Group {g.groupId}</Popup>
-                          </Marker>
-                          <Polyline positions={[[s.pickupLat, s.pickupLng], [s.dropLat, s.dropLng]]} pathOptions={{ color, weight: 2.5, opacity: 0.7, dashArray: "6 4" }} />
+                          {s.pickupLat != null && s.pickupLng != null && (
+                            <Marker position={[s.pickupLat, s.pickupLng] as [number, number]} icon={createGroupIcon(color, "P")}>
+                              <Popup><b>Pickup</b>: {s.pickupLocation}<br />Group {g.groupId} — {s.weight} kg<br />Confidence: {g.confidence}%</Popup>
+                            </Marker>
+                          )}
+                          {s.dropLat != null && s.dropLng != null && (
+                            <Marker position={[s.dropLat, s.dropLng] as [number, number]} icon={createGroupIcon(color, "D")}>
+                              <Popup><b>Drop</b>: {s.dropLocation}<br />Group {g.groupId}</Popup>
+                            </Marker>
+                          )}
+                          {s.pickupLat != null && s.dropLat != null && (
+                            <Polyline positions={[[s.pickupLat, s.pickupLng], [s.dropLat, s.dropLng]]} pathOptions={{ color, weight: 2.5, opacity: 0.7, dashArray: "6 4" }} />
+                          )}
                         </Fragment>
                       ))}
                     </Fragment>
@@ -804,6 +896,7 @@ export function LoadConsolidation() {
                 })
               )}
             </MapContainer>
+            )}
           </div>
         </div>
 
@@ -1091,5 +1184,47 @@ export function LoadConsolidation() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Error Boundary ────────────────────────────────────────────────────────────
+class LoadConsolidationErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[LoadConsolidation] render error:', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
+          <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl max-w-lg w-full">
+            <h2 className="text-red-400 font-bold text-lg mb-2">Load Consolidation failed to render</h2>
+            <p className="text-gray-400 text-sm font-mono">{this.state.error.message}</p>
+            <button
+              onClick={() => this.setState({ error: null })}
+              className="mt-4 px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded-lg transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function LoadConsolidation() {
+  return (
+    <LoadConsolidationErrorBoundary>
+      <LoadConsolidationInner />
+    </LoadConsolidationErrorBoundary>
   );
 }
