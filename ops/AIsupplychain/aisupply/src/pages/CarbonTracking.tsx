@@ -14,12 +14,16 @@ interface ShipmentResult {
   id: string; lane: string; dist_km: number; weight_kg: number; max_kg: number;
   truck: string; load_factor_pct: number; co2_kg: number; co2_baseline_kg: number;
   co2_saved_kg: number; risk: 'HIGH' | 'MEDIUM' | 'LOW';
+  emission_factor?: number; co2_intensity_g_tkm?: number;
+  fuel_saved_liters?: number; fuel_saved_inr?: number;
 }
 interface LaneEmission { lane: string; co2_kg: number; risk: 'HIGH' | 'MEDIUM' | 'LOW'; }
-interface ReductionOpp  { lane: string; type: string; finding: string; saving_kg: number; effort: 'Low' | 'Medium' | 'High'; }
+interface ReductionOpp  { lane: string; type: string; finding: string; saving_kg: number; effort: 'Low' | 'Medium' | 'High'; saving_inr?: number; }
 interface CarbonSummary {
   totalCo2Kg: number; baselineCo2Kg: number; savedCo2Kg: number; savingsPct: number;
   highRiskCount: number; carbonCreditUSD: number; shipmentCount: number;
+  carbonCreditINR?: number; fuelSavedLiters?: number; fuelSavedINR?: number;
+  treesEquivalent?: number; fleetEfficiencyPct?: number; emissionIntensity?: number;
 }
 interface CarbonApiData {
   shipments: ShipmentResult[]; highEmissionLanes: LaneEmission[];
@@ -43,7 +47,7 @@ const DEFAULT_SHIPMENTS = [
 
 const AGENT_STEPS = [
   { key: 'ingest',   label: 'Data Ingestion',        desc: 'Pull shipment & route data',           ms: 120  },
-  { key: 'estimate', label: 'Emission Estimation',    desc: 'Apply 0.21 kg CO₂/km × load factor',  ms: 85   },
+  { key: 'estimate', label: 'Emission Estimation',    desc: 'Truck-specific EF (0.12–0.26 kg/km) × load factor',  ms: 85   },
   { key: 'lane',     label: 'Lane Profiling',         desc: 'Rank corridors by emission intensity', ms: 45   },
   { key: 'opps',     label: 'Opportunity Detection',  desc: 'Identify consolidation + mode shifts', ms: 200  },
   { key: 'insights', label: 'AI Insight Generation',  desc: 'Gemini 2.5 Flash sustainability brief', ms: 1800 },
@@ -86,40 +90,67 @@ const SDG_BADGES = [
 
 // ── Local fallback computation ─────────────────────────────────────────────────
 function computeLocalData(): CarbonApiData {
-  const EF = 0.21;
+  const EF_MAP:  Record<string, number> = {
+    'Tata Ace Gold': 0.12, 'Mahindra Bolero': 0.12, 'Tata Ultra T.7': 0.21,
+    'Eicher Pro 2049': 0.21, 'BharatBenz': 0.26,
+  };
+  const LPK_MAP: Record<string, number> = {
+    'Tata Ace Gold': 0.09, 'Mahindra Bolero': 0.09, 'Tata Ultra T.7': 0.18,
+    'Eicher Pro 2049': 0.18, 'BharatBenz': 0.22,
+  };
+  const DIESEL_INR = 92.0;
   const shipments: ShipmentResult[] = DEFAULT_SHIPMENTS.map(s => {
+    const ef   = EF_MAP[s.truck]  ?? 0.21;
+    const lpk  = LPK_MAP[s.truck] ?? 0.18;
     const lf   = s.weight_kg / s.max_kg;
-    const co2  = parseFloat((s.dist_km * lf * EF).toFixed(1));
-    const base = parseFloat((s.dist_km * EF).toFixed(1));
+    const co2  = parseFloat((s.dist_km * lf * ef).toFixed(1));
+    const base = parseFloat((s.dist_km * ef).toFixed(1));
+    const fuel_saved_liters = parseFloat((s.dist_km * lpk * (1 - lf)).toFixed(2));
+    const fuel_saved_inr    = parseFloat((fuel_saved_liters * DIESEL_INR).toFixed(0));
+    const tonne_km           = (s.weight_kg / 1000) * s.dist_km;
+    const intensity          = tonne_km > 0 ? parseFloat(((co2 * 1000) / tonne_km).toFixed(1)) : 0;
     return {
       ...s, load_factor_pct: Math.round(lf * 100),
       co2_kg: co2, co2_baseline_kg: base,
       co2_saved_kg: parseFloat((base - co2).toFixed(1)),
       risk: co2 > 50 ? 'HIGH' : co2 > 25 ? 'MEDIUM' : 'LOW',
+      emission_factor: ef, co2_intensity_g_tkm: intensity,
+      fuel_saved_liters, fuel_saved_inr,
     };
   });
-  const total  = parseFloat(shipments.reduce((s, r) => s + r.co2_kg, 0).toFixed(1));
-  const base   = parseFloat(shipments.reduce((s, r) => s + r.co2_baseline_kg, 0).toFixed(1));
-  const saved  = parseFloat((base - total).toFixed(1));
-  const hc     = shipments.filter(s => s.risk === 'HIGH').length;
+  const total         = parseFloat(shipments.reduce((s, r) => s + r.co2_kg, 0).toFixed(1));
+  const base          = parseFloat(shipments.reduce((s, r) => s + r.co2_baseline_kg, 0).toFixed(1));
+  const saved         = parseFloat((base - total).toFixed(1));
+  const hc            = shipments.filter(s => s.risk === 'HIGH').length;
+  const fuelSavedL    = parseFloat(shipments.reduce((s, r) => s + (r.fuel_saved_liters ?? 0), 0).toFixed(1));
+  const fuelSavedINR  = Math.round(fuelSavedL * DIESEL_INR);
+  const treesEquiv    = Math.floor(saved / 21);
+  const totalTonneKm  = shipments.reduce((s, r) => s + (r.weight_kg / 1000) * r.dist_km, 0);
+  const emitIntensity = parseFloat(((total * 1000) / Math.max(totalTonneKm, 0.001)).toFixed(1));
   return {
     shipments,
     highEmissionLanes: [...shipments]
       .sort((a, b) => b.co2_kg - a.co2_kg)
       .map(s => ({ lane: s.lane, co2_kg: s.co2_kg, risk: s.risk })),
     reductionOpportunities: [
-      { lane: 'Hyderabad → Kurnool', type: 'consolidation', finding: 'Load factor 60% — consolidation can save 7.4 kg CO₂/run.', saving_kg: 7.4, effort: 'Low' },
-      { lane: 'Delhi NCR → Jaipur',  type: 'scheduling',    finding: 'Night-window dispatch (22:00–05:00) reduces fuel burn ~12% → saves 7.6 kg CO₂.', saving_kg: 7.6, effort: 'Low' },
-      { lane: 'Blr → Chennai',       type: 'vehicle_upgrade', finding: 'Upgrade to BS6 Euro-6 (0.21→0.16 kg/km) saves 17.4 kg CO₂ on highest-emission corridor.', saving_kg: 17.4, effort: 'Medium' },
+      { lane: 'Delhi → Gurgaon',     type: 'ev_route',        finding: 'Urban short-haul 32 km — EV switch saves 76% CO₂ vs diesel on this corridor.', saving_kg: 1.0,  effort: 'Medium', saving_inr: 130  },
+      { lane: 'Hyderabad → Kurnool', type: 'consolidation',   finding: 'Load factor 60% — consolidation can save 7.4 kg CO₂/run.', saving_kg: 7.4, effort: 'Low',    saving_inr: 870  },
+      { lane: 'Delhi NCR → Jaipur',  type: 'scheduling',      finding: 'Night-window dispatch (22:00–05:00) reduces fuel burn ~12% → saves 7.6 kg CO₂.', saving_kg: 7.6, effort: 'Low',   saving_inr: 480  },
+      { lane: 'Blr → Chennai',       type: 'vehicle_upgrade', finding: 'Upgrade to BS6 Euro-6 saves 17.4 kg CO₂ on highest-emission corridor.', saving_kg: 17.4, effort: 'Medium', saving_inr: 1420 },
     ],
     summary: {
       totalCo2Kg: total, baselineCo2Kg: base, savedCo2Kg: saved,
       savingsPct: parseFloat((saved / base * 100).toFixed(1)),
       highRiskCount: hc,
       carbonCreditUSD: parseFloat((saved * 0.015).toFixed(2)),
+      carbonCreditINR: Math.round(saved * 0.015 * 84),
       shipmentCount: shipments.length,
+      fuelSavedLiters: fuelSavedL, fuelSavedINR,
+      treesEquivalent: treesEquiv,
+      fleetEfficiencyPct: parseFloat(((1 - total / Math.max(base, 1)) * 100).toFixed(1)),
+      emissionIntensity: emitIntensity,
     },
-    aiInsight: `Fleet emitting ${total} kg CO₂ across ${shipments.length} shipments — ${saved} kg saved vs full-load baseline. Consolidation of low-load corridors and night-window scheduling are highest-ROI reduction actions.`,
+    aiInsight: `Fleet emitting ${total} kg CO₂ across ${shipments.length} shipments — ${saved} kg saved vs full-load baseline. Fuel savings: ₹${fuelSavedINR.toLocaleString()} (${fuelSavedL} L). Emission intensity: ${emitIntensity} g/tonne-km. Consolidation and night-window scheduling are highest-ROI actions.`,
   };
 }
 
@@ -151,7 +182,8 @@ const effortColor = (e: string) =>
                    'text-red-400 bg-red-500/10 border-red-500/20';
 
 const typeIcon = (t: string) =>
-  t === 'consolidation' ? '📦' : t === 'scheduling' ? '🌙' : '🚛';
+  t === 'consolidation' ? '📦' : t === 'scheduling' ? '🌙' :
+  t === 'intermodal'    ? '🚂' : t === 'ev_route'   ? '⚡' : '🚛';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export function CarbonTracking() {
@@ -168,11 +200,13 @@ export function CarbonTracking() {
   const hasAutoRun = useRef(false);
 
   // Count-up animations (re-trigger when apiData loads)
-  const totalCo2Disp = useCountUp(apiData?.summary.totalCo2Kg    ?? 0, 1400, 1);
-  const savedCo2Disp = useCountUp(apiData?.summary.savedCo2Kg    ?? 0, 1400, 1);
-  const creditDisp   = useCountUp(apiData?.summary.carbonCreditUSD ?? 0, 1400, 2);
-  const greenMiles   = useCountUp(45678, 2000, 0);
-  const esgScore     = useCountUp(87,    1200, 0);
+  const totalCo2Disp  = useCountUp(apiData?.summary.totalCo2Kg      ?? 0, 1400, 1);
+  const savedCo2Disp  = useCountUp(apiData?.summary.savedCo2Kg      ?? 0, 1400, 1);
+  const creditDisp    = useCountUp(apiData?.summary.carbonCreditUSD  ?? 0, 1400, 2);
+  const fuelSavedDisp = useCountUp(apiData?.summary.fuelSavedINR     ?? 0, 1600, 0);
+  const treesDisp     = useCountUp(apiData?.summary.treesEquivalent  ?? 0, 1600, 0);
+  const greenMiles    = useCountUp(45678, 2000, 0);
+  const esgScore      = useCountUp(87,    1200, 0);
 
   // Typewriter for AI insight
   useEffect(() => {
@@ -423,41 +457,59 @@ export function CarbonTracking() {
 
       {/* ── LIVE AGENT KPI CARDS (appear once agent finishes) ──────────────── */}
       {agentDone && apiData && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-eco-card rounded-xl p-5 border border-red-500/20 flex items-start justify-between shadow-sm">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="bg-eco-card rounded-xl p-4 border border-red-500/20 flex items-start justify-between shadow-sm">
             <div>
-              <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">Fleet CO₂ (Today)</div>
-              <div className="text-3xl font-bold text-red-400">{totalCo2Disp} <span className="text-lg">kg</span></div>
-              <div className="text-xs text-gray-500 mt-1">{apiData.summary.shipmentCount} active shipments</div>
+              <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">Fleet CO₂</div>
+              <div className="text-2xl font-bold text-red-400">{totalCo2Disp} <span className="text-sm">kg</span></div>
+              <div className="text-xs text-gray-500 mt-1">{apiData.summary.shipmentCount} shipments</div>
             </div>
-            <div className="p-2.5 rounded-xl bg-red-500/10"><Flame className="w-5 h-5 text-red-400" /></div>
+            <div className="p-2 rounded-xl bg-red-500/10"><Flame className="w-4 h-4 text-red-400" /></div>
           </div>
 
-          <div className="bg-eco-card rounded-xl p-5 border border-emerald-500/20 flex items-start justify-between shadow-sm">
+          <div className="bg-eco-card rounded-xl p-4 border border-emerald-500/20 flex items-start justify-between shadow-sm">
             <div>
               <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">CO₂ Saved</div>
-              <div className="text-3xl font-bold text-emerald-400">{savedCo2Disp} <span className="text-lg">kg</span></div>
+              <div className="text-2xl font-bold text-emerald-400">{savedCo2Disp} <span className="text-sm">kg</span></div>
               <div className="text-xs text-emerald-500 mt-1 font-semibold">↓ {apiData.summary.savingsPct}% vs full-load</div>
             </div>
-            <div className="p-2.5 rounded-xl bg-emerald-500/10"><Leaf className="w-5 h-5 text-emerald-400" /></div>
+            <div className="p-2 rounded-xl bg-emerald-500/10"><Leaf className="w-4 h-4 text-emerald-400" /></div>
           </div>
 
-          <div className="bg-eco-card rounded-xl p-5 border border-blue-500/20 flex items-start justify-between shadow-sm">
+          <div className="bg-eco-card rounded-xl p-4 border border-blue-500/20 flex items-start justify-between shadow-sm">
             <div>
               <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">Carbon Credits</div>
-              <div className="text-3xl font-bold text-blue-400">${creditDisp}</div>
-              <div className="text-xs text-blue-400 mt-1">≈ ₹{(apiData.summary.carbonCreditUSD * 83).toFixed(0)} at $15/ton rate</div>
+              <div className="text-2xl font-bold text-blue-400">${creditDisp}</div>
+              <div className="text-xs text-blue-400 mt-1">≈ ₹{(apiData.summary.carbonCreditINR ?? Math.round(apiData.summary.carbonCreditUSD * 84)).toLocaleString()}</div>
             </div>
-            <div className="p-2.5 rounded-xl bg-blue-500/10"><Award className="w-5 h-5 text-blue-400" /></div>
+            <div className="p-2 rounded-xl bg-blue-500/10"><Award className="w-4 h-4 text-blue-400" /></div>
           </div>
 
-          <div className="bg-eco-card rounded-xl p-5 border border-amber-500/20 flex items-start justify-between shadow-sm">
+          <div className="bg-eco-card rounded-xl p-4 border border-amber-500/20 flex items-start justify-between shadow-sm">
             <div>
-              <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">High-Risk Corridors</div>
-              <div className="text-3xl font-bold text-amber-400">{apiData.summary.highRiskCount}</div>
-              <div className="text-xs text-amber-400 mt-1">Flagged for priority action</div>
+              <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">High-Risk Lanes</div>
+              <div className="text-2xl font-bold text-amber-400">{apiData.summary.highRiskCount}</div>
+              <div className="text-xs text-amber-400 mt-1">Priority action needed</div>
             </div>
-            <div className="p-2.5 rounded-xl bg-amber-500/10"><AlertTriangle className="w-5 h-5 text-amber-400" /></div>
+            <div className="p-2 rounded-xl bg-amber-500/10"><AlertTriangle className="w-4 h-4 text-amber-400" /></div>
+          </div>
+
+          <div className="bg-eco-card rounded-xl p-4 border border-cyan-500/20 flex items-start justify-between shadow-sm">
+            <div>
+              <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">Fuel Saved</div>
+              <div className="text-2xl font-bold text-cyan-400">₹{fuelSavedDisp.toLocaleString()}</div>
+              <div className="text-xs text-cyan-500 mt-1">{apiData.summary.fuelSavedLiters ?? 0} L diesel</div>
+            </div>
+            <div className="p-2 rounded-xl bg-cyan-500/10"><Zap className="w-4 h-4 text-cyan-400" /></div>
+          </div>
+
+          <div className="bg-eco-card rounded-xl p-4 border border-green-500/20 flex items-start justify-between shadow-sm">
+            <div>
+              <div className="text-eco-text-secondary text-xs font-medium mb-1 uppercase tracking-wider">Trees Equiv.</div>
+              <div className="text-2xl font-bold text-green-400">{treesDisp}</div>
+              <div className="text-xs text-green-500 mt-1">CO₂ absorbed/yr</div>
+            </div>
+            <div className="p-2 rounded-xl bg-green-500/10"><Leaf className="w-4 h-4 text-green-400" /></div>
           </div>
         </div>
       )}
@@ -470,7 +522,7 @@ export function CarbonTracking() {
               <Truck className="w-4 h-4 text-green-400" /> Shipment-Level Emission Estimator
             </h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              Model: CO₂ (kg) = Distance × (Weight / MaxCapacity) × 0.21 kg/km · Click columns to sort
+              Model: CO₂ (kg) = Distance × Load Factor × Truck EF (0.12–0.26 kg/km) · Click columns to sort
             </p>
           </div>
           <span className={`text-[10px] px-2 py-1 rounded-lg border font-semibold ${
@@ -613,6 +665,11 @@ export function CarbonTracking() {
                   </div>
                 </div>
                 <p className="text-xs text-gray-400 leading-relaxed">{opp.finding}</p>
+                {opp.saving_inr != null && opp.saving_inr > 0 && (
+                  <p className="text-[10px] text-cyan-400 mt-1.5 font-medium">
+                    💰 ₹{opp.saving_inr.toLocaleString()} est. fuel savings
+                  </p>
+                )}
                 <div className="mt-2 h-1 w-full bg-gray-700/30 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full bg-emerald-500 transition-all duration-1000"

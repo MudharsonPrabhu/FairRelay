@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { FileText, Box, Truck, MapPin, Star, ArrowUpRight, TrendingUp, TrendingDown, AlertCircle, Brain, Zap, RefreshCw } from 'lucide-react';
+import { FileText, Box, Truck, MapPin, Star, ArrowUpRight, TrendingUp, TrendingDown, AlertCircle, Brain, Zap, RefreshCw, BarChart3, Leaf, Shield, Layers, Route } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { Link } from 'react-router-dom';
 import { useToast } from '../context/ToastContext';
@@ -146,8 +146,22 @@ export function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+      <div className="space-y-6">
+        {/* Skeleton banner */}
+        <div className="h-24 bg-white/3 rounded-xl border border-white/5 animate-pulse" />
+        {/* Skeleton strip */}
+        <div className="flex gap-4">
+          {[1,2,3,4].map(i => <div key={i} className="flex-1 h-16 bg-white/3 rounded-xl border border-white/5 animate-pulse" />)}
+        </div>
+        {/* Skeleton stat cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {[1,2,3,4].map(i => <div key={i} className="h-32 bg-white/3 rounded-xl border border-white/5 animate-pulse" />)}
+        </div>
+        {/* Skeleton chart row */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 h-[340px] bg-white/3 rounded-xl border border-white/5 animate-pulse" />
+          <div className="h-[340px] bg-white/3 rounded-xl border border-white/5 animate-pulse" />
+        </div>
       </div>
     );
   }
@@ -168,112 +182,72 @@ export function Dashboard() {
     );
   }
 
-  // ── Agent health check ──────────────────────────────────────────────────
-  const AGENT_NAMES = ['Validation', 'Compatibility', 'Clustering', 'Optimization', '3D Packing', 'Explainability', 'Feedback'];
-
   return (
-    <div className="space-y-5">
-
-      {/* Demo mode banner */}
+    <div className="space-y-6">
       {isDemo && (
-        <div className="flex items-center gap-2.5 px-4 py-2.5 bg-yellow-500/8 border border-yellow-500/20
-                        rounded-xl text-yellow-400 text-sm">
-          <span>🧪</span>
-          <span className="font-medium">Demo Mode — sample data only. Log in with OTP for live data.</span>
+        <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-400 text-sm">
+          <span className="text-base">🧪</span>
+          <span className="font-medium">Testing Mode — all data is mocked. Log in with OTP for live data.</span>
         </div>
       )}
 
-      {/* ── ZONE 1: AI Command Bar ──────────────────────────────────────────── */}
-      <div className="rounded-xl border p-4"
-        style={{
-          background: 'linear-gradient(135deg, rgba(234,88,12,0.08) 0%, rgba(124,58,237,0.05) 100%)',
-          borderColor: 'rgba(234,88,12,0.18)'
-        }}>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-
-          {/* Left: Brand + status */}
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-orange-500/12 rounded-xl border border-orange-500/25">
-              <Brain className="w-6 h-6 text-orange-400" />
+      {/* AI Status Bar */}
+      <div className="bg-gradient-to-r from-orange-900/40 via-amber-900/30 to-orange-900/40 rounded-xl border border-orange-500/20 p-5">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-orange-500/10 rounded-xl border border-orange-500/30">
+              <Brain className="w-7 h-7 text-orange-400" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-[15px] font-bold text-white">FairRelay AI Engine</h2>
-                <span className="ai-badge">8 Agents</span>
-              </div>
-              <p className="text-xs text-gray-500">LangGraph orchestration · Fairness-aware · Explainable</p>
+              <h2 className="text-lg font-bold text-white">FairRelay AI Dispatch Engine</h2>
+              <p className="text-sm text-eco-text-secondary">8-agent LangGraph pipeline · Fairness-aware routing · Wellness-first dispatch</p>
             </div>
           </div>
-
-          {/* Center: Agent pills */}
-          <div className="hidden xl:flex items-center gap-1.5">
-            {AGENT_NAMES.map((a) => (
-              <span key={a}
-                className="text-[10px] px-2 py-1 rounded-full border border-white/8
-                               bg-white/3 text-gray-500 font-medium">
-                {a}
-              </span>
-            ))}
-          </div>
-
-          {/* Right: Status + CTAs */}
-          <div className="flex items-center gap-2.5">
-            <div className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 ${brainStatus === 'connected'
-                ? 'bg-emerald-400/10 border-emerald-400/25 text-emerald-400'
-                : 'bg-amber-400/10 border-amber-400/25 text-amber-400'
-              }`}>
-              <div className={`w-1.5 h-1.5 rounded-full animate-pulse
-                              ${brainStatus === 'connected' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-              {brainStatus === 'connected' ? 'AI Online' : isDemo ? 'Demo' : 'AI Offline'}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <div className={`px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 ${
+              brainStatus === 'connected'
+                ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-400'
+                : 'bg-amber-400/10 border-amber-400/30 text-amber-400'
+            }`}>
+              <span className={`w-2 h-2 rounded-full animate-pulse ${brainStatus === 'connected' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              {brainStatus === 'connected' ? 'Brain Online' : isDemo ? 'Demo Mode' : 'Brain Offline'}
             </div>
-
-            <Link to="/load-consolidation"
-              className="px-3 py-1.5 rounded-lg border border-white/10 bg-white/5
-                             hover:bg-white/8 text-white text-xs font-medium transition-all">
-              Consolidate Loads
+            <Link to="/load-consolidation" className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/8 text-gray-300 text-xs font-medium flex items-center gap-1.5 transition-all">
+              <Layers className="w-3.5 h-3.5 text-violet-400" /> Consolidate
             </Link>
-
-            <Link to="/fair-dispatch"
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold
-                             bg-gradient-to-r from-orange-600 to-amber-500
-                             hover:from-orange-500 hover:to-amber-400 text-white
-                             shadow-lg shadow-orange-600/20 transition-all">
-              <Zap className="w-3.5 h-3.5" /> Run Fair Dispatch
+            <Link to="/route-optimization" className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/8 text-gray-300 text-xs font-medium flex items-center gap-1.5 transition-all">
+              <Route className="w-3.5 h-3.5 text-blue-400" /> Optimize
+            </Link>
+            <Link
+              to="/fair-dispatch"
+              className="bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow-lg shadow-orange-600/20 transition-all"
+            >
+              <Zap className="w-4 h-4" /> Run Fair Dispatch
             </Link>
           </div>
         </div>
       </div>
 
-      {/* ── ZONE 3: Intelligence Strip (hero AI numbers) ────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* AI Intelligence Strip */}
+      <div className="flex flex-wrap gap-3">
         {[
-          { icon: '⚖️', label: 'Gini Index Today', value: '0.12', sub: 'Grade A Fairness', color: 'text-emerald-400', glow: 'hover:border-emerald-500/25' },
-          { icon: '🌿', label: 'CO₂ Saved', value: '14.2 kg', sub: 'This dispatch run', color: 'text-green-400', glow: 'hover:border-green-500/25' },
-          { icon: '🤖', label: 'AI Dispatches', value: stats?.dispatchRuns || '48', sub: 'Runs today', color: 'text-orange-400', glow: 'hover:border-orange-500/25' },
-          { icon: '⏱️', label: 'Time Saved vs Manual', value: '3.2 hrs', sub: 'Per dispatch run', color: 'text-blue-400', glow: 'hover:border-blue-500/25' },
-        ].map((item) => (
-          <div key={item.label}
-            className={`flex items-center gap-3 px-4 py-3 rounded-xl border border-white/7
-                           transition-all duration-200 cursor-default ${item.glow}`}
-            style={{ background: 'rgba(255,255,255,0.025)' }}>
-            <span className="text-xl">{item.icon}</span>
+          { Icon: BarChart3, label: 'Gini Today', value: '0.12', sub: 'Excellent fairness', color: 'text-emerald-400', bg: 'border-emerald-500/15 hover:border-emerald-500/30' },
+          { Icon: Leaf,      label: 'CO₂ Saved',  value: '14.2 kg', sub: 'This run', color: 'text-green-400', bg: 'border-green-500/15 hover:border-green-500/30' },
+          { Icon: Brain,     label: 'AI Dispatches', value: String(stats?.dispatchRuns || '48'), sub: 'Today', color: 'text-orange-400', bg: 'border-orange-500/15 hover:border-orange-500/30' },
+          { Icon: Shield,    label: 'Time Saved', value: '3.2 hrs', sub: 'vs manual dispatch', color: 'text-blue-400', bg: 'border-blue-500/15 hover:border-blue-500/30' },
+        ].map((item, i) => (
+          <div key={i} className={`flex items-center gap-3 px-4 py-2.5 bg-white/3 border ${item.bg} rounded-xl transition-all`}>
+            <item.Icon className={`w-5 h-5 flex-shrink-0 ${item.color}`} />
             <div>
-              <p className={`text-xl font-bold font-mono-data ${item.color}`}>{item.value}</p>
-              <p className="text-[10px] text-gray-500 leading-tight">{item.label}</p>
-              <p className="text-[9px] text-gray-600">{item.sub}</p>
+              <p className={`text-lg font-bold font-data leading-none ${item.color}`}>{item.value}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{item.label} · {item.sub}</p>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Section label */}
-      <div className="flex items-center gap-2">
-        <span className="text-white font-semibold text-sm">Operations Overview</span>
-        <div className="flex-1 h-px bg-white/5" />
-        <button onClick={fetchRealData}
-          className="flex items-center gap-1 text-xs text-gray-500 hover:text-orange-400 transition-colors">
-          <RefreshCw className="w-3 h-3" /> Refresh
-        </button>
+      <div className="flex items-center text-sm text-eco-text-secondary mb-2">
+        <span className="text-white font-semibold">Dashboard</span>
       </div>
 
       {/* Stats Row */}
@@ -405,7 +379,7 @@ function StatWidget({ title, value, change, positive, icon: Icon, iconColor, ico
     ? value
     : animated.toLocaleString();
   return (
-    <div className="bg-eco-card rounded-xl p-6 border border-eco-card-border flex items-start justify-between shadow-lg hover:shadow-xl transition-shadow cursor-default hover:border-eco-brand-orange/20">
+    <div className="bg-eco-card rounded-xl p-6 border border-eco-card-border flex items-start justify-between shadow-lg hover-lift cursor-default hover:border-eco-brand-orange/20">
       <div>
         <div className="text-eco-text-secondary text-sm font-medium mb-1">{title}</div>
         <div className="text-3xl font-bold text-white mb-1">{displayValue}</div>

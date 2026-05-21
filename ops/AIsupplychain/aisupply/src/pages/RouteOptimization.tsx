@@ -17,10 +17,11 @@ import {
   Check, ArrowRight, Brain, Sliders, ToggleLeft, ToggleRight, Lightbulb,
   DollarSign, Target, Award, BookOpen, Loader2, CheckCircle, Activity,
   ChevronRight, Cpu, Sparkles, Navigation, Map as MapIcon, BarChart3, RefreshCw,
+  PlusCircle, AlertTriangle,
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
-import { runConsolidationOptimize } from '../services/apiClient';
+import { runConsolidationOptimize, dynamicInsertStop } from '../services/apiClient';
 import { getDistanceMatrix } from '../services/olaMaps';
 
 // ── Leaflet icon fix ────────────────────────────────────────────────────────
@@ -103,6 +104,9 @@ const MUMBAI_STOPS = [
   { id: 'S10', lat: 19.0550, lng: 72.8400, name: 'Mahim Dargah',          weight: 9,  time: 7,  priority: 'HIGH' },
 ];
 const WAREHOUSE = { lat: 19.076, lng: 72.877 };
+
+// Urgent stop used by the dynamic-insert demo — a location not in MUMBAI_STOPS
+const URGENT_STOP = { id: 'S_URG', lat: 18.9218, lng: 72.8347, name: 'Colaba Causeway — URGENT' };
 
 // ── Math utilities ───────────────────────────────────────────────────────────
 function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -503,6 +507,11 @@ export function RouteOptimization() {
   const [animKey, setAnimKey]           = useState(0);
   const [routeError, setRouteError]     = useState('');
 
+  // ── Dynamic insert state ──
+  const [insertStatus, setInsertStatus] = useState<'idle' | 'inserting' | 'done' | 'error'>('idle');
+  const [insertResult, setInsertResult] = useState<any>(null);
+  const [insertPriority, setInsertPriority] = useState<'HIGH' | 'MEDIUM' | 'LOW'>('HIGH');
+
   useEffect(() => { if (routeResult) setAnimKey(k => k + 1); }, [routeResult]);
 
   // ── Run consolidation ────────────────────────────────────────────────────
@@ -580,7 +589,87 @@ export function RouteOptimization() {
     const opt = naive * 0.72;
     setRouteResult({ naive: +naive.toFixed(1), opt: +opt.toFixed(1), saved: +(naive-opt).toFixed(1), pct: 28, before: stops.map(s => s.id), after: stops.map(s => s.id).reverse(), method: '2-opt local' });
     setRouteStatus('done');
+    setInsertStatus('idle');
+    setInsertResult(null);
     setRouteError('Ola Maps unreachable — showing local 2-opt estimate.');
+  };
+
+  // ── Insert urgent stop via brain's cheapest-insertion endpoint ────────────
+  const insertUrgentStop = async () => {
+    if (!routeResult) return;
+    setInsertStatus('inserting');
+    setInsertResult(null);
+
+    // Use current resequenced order if we've already inserted once, else use optimized route
+    const currentIds: string[] = insertResult?.new_order ?? routeResult.after;
+    const routeStops = currentIds
+      .filter((id: string) => id !== URGENT_STOP.id)
+      .map((id: string) => {
+        const stop = MUMBAI_STOPS.find(m => m.id === id);
+        return stop
+          ? { id: stop.id, latitude: stop.lat, longitude: stop.lng }
+          : { id, latitude: URGENT_STOP.lat, longitude: URGENT_STOP.lng };
+      });
+
+    const payload = {
+      route_stops: routeStops,
+      new_stop: { id: URGENT_STOP.id, latitude: URGENT_STOP.lat, longitude: URGENT_STOP.lng },
+      warehouse_lat: WAREHOUSE.lat,
+      warehouse_lng: WAREHOUSE.lng,
+    };
+
+    let result: any = null;
+
+    // Primary: brain directly
+    try {
+      const res = await fetch(`${BRAIN_URL}/api/v1/routes/dynamic-insert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) result = await res.json();
+    } catch { /* fall through */ }
+
+    // Fallback: backend-dm proxy
+    if (!result) {
+      try {
+        const r = await dynamicInsertStop(payload);
+        if (r?.insertion_position != null) result = r;
+      } catch { /* fall through */ }
+    }
+
+    // Client-side cheapest insertion if both APIs are unreachable
+    if (!result) {
+      const stopCoords = routeStops.map(s => {
+        const stop = MUMBAI_STOPS.find(m => m.id === s.id);
+        return stop ? { id: s.id, lat: stop.lat, lng: stop.lng } : { id: s.id, lat: s.latitude, lng: s.longitude };
+      });
+      let best = { pos: 1, cost: Infinity };
+      for (let i = 0; i < stopCoords.length - 1; i++) {
+        const prev = stopCoords[i];
+        const next = stopCoords[i + 1];
+        const detour = haversine(prev.lat, prev.lng, URGENT_STOP.lat, URGENT_STOP.lng)
+                     + haversine(URGENT_STOP.lat, URGENT_STOP.lng, next.lat, next.lng)
+                     - haversine(prev.lat, prev.lng, next.lat, next.lng);
+        if (detour < best.cost) best = { pos: i + 1, cost: detour };
+      }
+      const newOrder = [
+        ...routeStops.slice(0, best.pos).map(s => s.id),
+        URGENT_STOP.id,
+        ...routeStops.slice(best.pos).map(s => s.id),
+      ];
+      result = {
+        new_order: newOrder,
+        insertion_position: best.pos,
+        additional_distance_km: +best.cost.toFixed(1),
+        source: 'local',
+      };
+      showToast('Brain Offline', 'Used client-side cheapest insertion fallback', 'info');
+    }
+
+    setInsertResult({ ...result, source: result.source || 'brain' });
+    setInsertStatus('done');
   };
 
   // ── Derived data ─────────────────────────────────────────────────────────
@@ -1240,7 +1329,92 @@ export function RouteOptimization() {
                   </div>
                 </div>
 
-                <button onClick={() => { setRouteStatus('idle'); setRouteResult(null); }} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-white transition-colors">
+                {/* Dynamic Reroute — Insert Urgent Stop */}
+                <div className="bg-eco-card border border-purple-500/20 rounded-xl p-5">
+                  <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                        <PlusCircle className="w-4 h-4 text-purple-400" />
+                        Dynamic Reroute — Insert Urgent Stop
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-purple-300 font-medium">Brain API</span>
+                      </h3>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Calls <code className="text-purple-300 font-mono">POST /routes/dynamic-insert</code> — cheapest insertion into the live route
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={insertPriority}
+                        onChange={e => setInsertPriority(e.target.value as 'HIGH' | 'MEDIUM' | 'LOW')}
+                        className="bg-white/5 border border-white/10 text-white text-xs rounded-lg px-3 py-1.5 focus:border-purple-500/50 focus:outline-none"
+                      >
+                        {(['HIGH', 'MEDIUM', 'LOW'] as const).map(p => (
+                          <option key={p} value={p} style={{ background: '#1f2937' }}>{p} priority</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={insertUrgentStop}
+                        disabled={insertStatus === 'inserting'}
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-violet-500 text-white text-xs font-semibold disabled:opacity-50 transition-all shadow-lg shadow-purple-600/20"
+                      >
+                        {insertStatus === 'inserting'
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Inserting…</>
+                          : <><PlusCircle className="w-3.5 h-3.5" /> Insert Colaba Stop</>}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Stop being inserted */}
+                  <div className="flex items-center gap-3 p-3 bg-purple-500/5 border border-purple-500/15 rounded-lg mb-4">
+                    <AlertTriangle className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-white">New Stop: {URGENT_STOP.name}</p>
+                      <p className="text-[10px] text-gray-400">lat {URGENT_STOP.lat}, lng {URGENT_STOP.lng} — will be inserted at minimum-cost position</p>
+                    </div>
+                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded border ${insertPriority === 'HIGH' ? 'text-red-400 bg-red-400/10 border-red-400/20' : insertPriority === 'MEDIUM' ? 'text-yellow-400 bg-yellow-400/10 border-yellow-400/20' : 'text-gray-400 bg-gray-400/10 border-gray-400/20'}`}>
+                      {insertPriority}
+                    </span>
+                  </div>
+
+                  {insertStatus === 'done' && insertResult && (
+                    <div className="space-y-3">
+                      {/* Result header */}
+                      <div className="flex items-center gap-3 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
+                        <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs font-semibold text-white">
+                            Inserted at position {insertResult.insertion_position + 1} — +{insertResult.additional_distance_km} km added
+                          </p>
+                          <p className="text-[10px] text-gray-400">
+                            Source: {insertResult.source === 'local' ? 'client-side cheapest insertion' : 'brain /api/v1/routes/dynamic-insert'}
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold text-purple-400">+{insertResult.additional_distance_km} km</span>
+                      </div>
+
+                      {/* Resequenced stops */}
+                      <div>
+                        <div className="text-[9px] text-purple-400 font-bold uppercase mb-2">Resequenced Route</div>
+                        <div className="flex flex-wrap gap-1">
+                          {(insertResult.new_order || []).map((id: string, i: number) => {
+                            const isUrgent = id === URGENT_STOP.id;
+                            const stop = MUMBAI_STOPS.find(m => m.id === id);
+                            return (
+                              <div key={`${id}-${i}`} className="flex items-center gap-0.5">
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${isUrgent ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 font-bold' : 'bg-white/4 border-white/10 text-gray-400'}`}>
+                                  {isUrgent ? '⚡' : ''}{i + 1}. {isUrgent ? 'Colaba' : (stop?.name.split(' ')[0] || id)}
+                                </span>
+                                {i < (insertResult.new_order.length - 1) && <span className="text-gray-700 text-[8px]">›</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <button onClick={() => { setRouteStatus('idle'); setRouteResult(null); setInsertStatus('idle'); setInsertResult(null); }} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-white transition-colors">
                   <RefreshCw className="w-4 h-4" /> Run again with different stops
                 </button>
               </div>

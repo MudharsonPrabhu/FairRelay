@@ -107,7 +107,7 @@ POST https://fairrelay-brain-gdm1.onrender.com/api/v1/consolidate
 
 ---
 
-### Call 3 — Carbon Intelligence (No Auth)
+### Call 3 — Carbon Intelligence
 
 ```
 POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate
@@ -117,9 +117,9 @@ POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate
 // Send
 {
   "shipments": [
-    { "id": "SH-001", "lane": "Mumbai → Pune",    "dist_km": 149, "weight_kg": 800,  "max_kg": 2000 },
-    { "id": "SH-002", "lane": "Delhi → Jaipur",   "dist_km": 281, "weight_kg": 1500, "max_kg": 5000 },
-    { "id": "SH-003", "lane": "Hyd → Kurnool",    "dist_km": 215, "weight_kg": 1800, "max_kg": 3000 }
+    { "id": "SH-001", "lane": "Mumbai → Pune",  "dist_km": 149, "weight_kg": 800,  "max_kg": 2000, "truck": "Tata Ace Gold"   },
+    { "id": "SH-002", "lane": "Delhi → Jaipur", "dist_km": 281, "weight_kg": 1500, "max_kg": 5000, "truck": "Eicher Pro 2049" },
+    { "id": "SH-003", "lane": "Hyd → Kurnool",  "dist_km": 215, "weight_kg": 1800, "max_kg": 3000, "truck": "BharatBenz"      }
   ]
 }
 ```
@@ -129,21 +129,25 @@ POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate
 {
   "data": {
     "summary": {
-      "totalCo2Kg": 57.3, "savedCo2Kg": 78.2, "savingsPct": 57.7,
-      "highRiskCount": 0,  "carbonCreditUSD": 1.17
+      "totalCo2Kg": 57.3,  "savedCo2Kg": 78.2, "savingsPct": 57.7,
+      "highRiskCount": 0,   "carbonCreditUSD": 1.17, "carbonCreditINR": 98,
+      "fuelSavedLiters": 47.3, "fuelSavedINR": 4352,
+      "treesEquivalent": 3, "fleetEfficiencyPct": 57.7,
+      "emissionIntensity": 84.2
     },
     "highEmissionLanes": [
       { "lane": "Hyd → Kurnool", "co2_kg": 27.1, "risk": "MEDIUM" }
     ],
     "reductionOpportunities": [
-      { "lane": "Delhi → Jaipur", "type": "consolidation", "saving_kg": 16.5, "effort": "Low" }
+      { "lane": "Delhi → Jaipur", "type": "consolidation", "saving_kg": 16.5, "effort": "Low", "saving_inr": 1530 },
+      { "lane": "Hyd → Kurnool",  "type": "ev_route",      "saving_kg": 15.1, "effort": "Medium", "saving_inr": 890 }
     ],
-    "aiInsight": "Fleet emitting 57.3 kg CO₂ — consolidating the Delhi-Jaipur corridor (30% loaded) delivers the fastest reduction with zero operational disruption."
+    "aiInsight": "Fleet emitting 57.3 kg CO₂ — 78.2 kg (57.7%) saved vs full-load baseline. Fuel savings: ₹4,352 (47 L). Emission intensity: 84.2 g/tonne-km. Consolidating the Delhi-Jaipur corridor delivers fastest reduction with zero disruption."
   }
 }
 ```
 
-**5-step agent pipeline. Per-shipment CO₂ model + high-emission lane flags + Gemini AI sustainability insight.**
+**5-step agent pipeline. Truck-specific CO₂ model (0.12–0.26 kg/km) + fuel ₹ savings + intermodal/EV opportunities + Gemini AI sustainability insight.**
 
 ---
 
@@ -169,11 +173,13 @@ POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate
    - [Shipments](#43-shipments)
    - [Deliveries](#44-deliveries)
    - [Wellness](#45-wellness)
-   - [Consolidation (Proxy)](#46-consolidation-proxy)
+   - [Consolidation & Route Proxy](#46-consolidation-proxy)
    - [V1 API Gateway](#47-v1-api-gateway)
    - [Absorption & Synergy](#48-absorption--synergy)
    - [Virtual Hubs & E-Way Bills](#49-virtual-hubs--e-way-bills)
    - [API Keys](#410-api-keys)
+   - [Dashboard](#411-dashboard)
+   - [Dispatch (AI Proxy)](#412-dispatch-ai-proxy)
 5. [Error Codes Reference](#5-error-codes-reference)
 6. [Rate Limits](#6-rate-limits)
 
@@ -206,7 +212,7 @@ Ops Dashboard — React + Vite              (fair-relay.vercel.app)
 | Service | Method | Header |
 |---------|--------|--------|
 | Brain `/lorri/*` | API Key | `x-api-key: fr_live_demo_key_2026` |
-| Brain `/lorri/health`, `/lorri/carbon/estimate` | None | — |
+| Brain `/lorri/health` | None | — |
 | Brain `/api/v1/*` | None | — |
 | Backend `/v1/*` | API Key | `x-api-key: <your-key>` |
 | Backend `/api/auth/*` | OTP → JWT | `Authorization: Bearer <token>` |
@@ -529,12 +535,13 @@ risk_level:
 
 ### 2.4 `POST /lorri/carbon/estimate`
 
-**Carbon Intelligence Agent.** No auth required. Runs a 5-step server-side pipeline to estimate per-shipment CO₂ emissions, identify high-emission lanes, generate reduction opportunities, and produce a Gemini 2.5 Flash AI insight.
+**Carbon Intelligence Agent v2.0.** **Auth:** `x-api-key` header required. Runs a 5-step server-side pipeline with truck-specific IPCC AR6/CPCB emission factors, per-shipment CO₂ and fuel ₹ savings, five opportunity types (consolidation, scheduling, intermodal, EV route, vehicle upgrade), and a Gemini 2.5 Flash AI insight.
 
 **Request:**
 ```bash
 curl -X POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate \
   -H "Content-Type: application/json" \
+  -H "x-api-key: fr_live_demo_key_2026" \
   -d '{
     "shipments": [
       {
@@ -576,7 +583,7 @@ curl -X POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate \
 | `shipments[].dist_km` | float | Yes | Route distance in km. **Range: 0–50,000 km.** |
 | `shipments[].weight_kg` | float | Yes | Cargo weight kg. **Range: 0–100,000 kg.** |
 | `shipments[].max_kg` | float | Yes | Vehicle max capacity kg. **Range: 0–100,000 kg.** |
-| `shipments[].truck` | string | No | Truck model label |
+| `shipments[].truck` | string | No | Truck model label — used to select truck-specific emission factor. Falls back to 0.21 kg/km if omitted or unrecognised. |
 | `date` | string | No | ISO date for the report |
 
 **Response `200 OK`:**
@@ -594,9 +601,13 @@ curl -X POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate \
         "max_kg": 2000,
         "truck": "Tata Ace Gold",
         "load_factor_pct": 40,
-        "co2_kg": 12.5,
-        "co2_baseline_kg": 31.3,
-        "co2_saved_kg": 18.8,
+        "emission_factor": 0.12,
+        "co2_kg": 7.2,
+        "co2_baseline_kg": 17.9,
+        "co2_saved_kg": 10.7,
+        "co2_intensity_g_tkm": 60.4,
+        "fuel_saved_liters": 8.1,
+        "fuel_saved_inr": 745,
         "risk": "LOW"
       },
       {
@@ -607,9 +618,13 @@ curl -X POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate \
         "max_kg": 5000,
         "truck": "Eicher Pro 2049",
         "load_factor_pct": 30,
+        "emission_factor": 0.21,
         "co2_kg": 17.7,
         "co2_baseline_kg": 59.0,
         "co2_saved_kg": 41.3,
+        "co2_intensity_g_tkm": 41.9,
+        "fuel_saved_liters": 29.8,
+        "fuel_saved_inr": 2742,
         "risk": "LOW"
       },
       {
@@ -620,62 +635,101 @@ curl -X POST https://fairrelay-brain-gdm1.onrender.com/lorri/carbon/estimate \
         "max_kg": 3000,
         "truck": "BharatBenz",
         "load_factor_pct": 60,
-        "co2_kg": 27.1,
-        "co2_baseline_kg": 45.2,
-        "co2_saved_kg": 18.1,
+        "emission_factor": 0.26,
+        "co2_kg": 33.5,
+        "co2_baseline_kg": 55.9,
+        "co2_saved_kg": 22.4,
+        "co2_intensity_g_tkm": 103.4,
+        "fuel_saved_liters": 9.5,
+        "fuel_saved_inr": 874,
         "risk": "MEDIUM"
       }
     ],
     "highEmissionLanes": [
-      { "lane": "Hyderabad → Kurnool", "co2_kg": 27.1, "risk": "MEDIUM" },
+      { "lane": "Hyderabad → Kurnool", "co2_kg": 33.5, "risk": "MEDIUM" },
       { "lane": "Delhi NCR → Jaipur",  "co2_kg": 17.7, "risk": "LOW"    },
-      { "lane": "Mumbai → Pune",        "co2_kg": 12.5, "risk": "LOW"    }
+      { "lane": "Mumbai → Pune",        "co2_kg": 7.2,  "risk": "LOW"    }
     ],
     "reductionOpportunities": [
       {
         "lane": "Delhi NCR → Jaipur",
         "type": "consolidation",
-        "finding": "Load factor 30% — consolidation can save 16.5 kg CO₂/run.",
-        "saving_kg": 16.5,
+        "finding": "Load factor 30% — consolidation can save 29.5 kg CO₂/run.",
+        "saving_kg": 29.5,
+        "saving_inr": 2742,
         "effort": "Low"
+      },
+      {
+        "lane": "Mumbai → Pune",
+        "type": "ev_route",
+        "finding": "Urban short-haul 149 km — EV switch saves 76% CO₂ vs diesel on this corridor.",
+        "saving_kg": 5.5,
+        "saving_inr": 565,
+        "effort": "Medium"
       },
       {
         "lane": "Hyderabad → Kurnool",
         "type": "vehicle_upgrade",
-        "finding": "Upgrade to BS6 Euro-6 (emission factor 0.21→0.16 kg/km) saves 6.5 kg CO₂ on highest-emission corridor.",
+        "finding": "Upgrade to BS6 Euro-6 (0.26→0.21 kg/km) saves 6.5 kg CO₂ on highest-emission corridor.",
         "saving_kg": 6.5,
+        "saving_inr": 598,
         "effort": "Medium"
       },
       {
         "lane": "Hyderabad → Kurnool",
         "type": "scheduling",
-        "finding": "Night-window dispatch (22:00–05:00) reduces fuel burn ~12% → saves 3.3 kg CO₂.",
-        "saving_kg": 3.3,
+        "finding": "Night-window dispatch (22:00–05:00) reduces fuel burn ~12% → saves 4.0 kg CO₂.",
+        "saving_kg": 4.0,
+        "saving_inr": 368,
         "effort": "Low"
       }
     ],
     "summary": {
-      "totalCo2Kg": 57.3,
-      "baselineCo2Kg": 135.5,
-      "savedCo2Kg": 78.2,
-      "savingsPct": 57.7,
+      "totalCo2Kg": 58.4,
+      "baselineCo2Kg": 132.8,
+      "savedCo2Kg": 74.4,
+      "savingsPct": 56.0,
       "highRiskCount": 0,
-      "carbonCreditUSD": 1.17,
+      "carbonCreditUSD": 1.12,
+      "carbonCreditINR": 94,
+      "fuelSavedLiters": 47.4,
+      "fuelSavedINR": 4361,
+      "treesEquivalent": 3,
+      "fleetEfficiencyPct": 56.0,
+      "emissionIntensity": 76.8,
       "shipmentCount": 3
     },
-    "aiInsight": "Fleet is emitting 57.3 kg CO₂ across 3 active shipments — 78.2 kg (57.7%) saved vs full-load baseline. Consolidating the Delhi-Jaipur corridor (currently 30% loaded) and switching to night-window departures on Hyderabad-Kurnool will deliver the fastest CO₂ reduction with minimal operational disruption."
+    "aiInsight": "Fleet emitting 58.4 kg CO₂ across 3 shipments — 74.4 kg (56%) saved vs full-load baseline. Fuel savings: ₹4,361 (47 L). Emission intensity: 76.8 g/tonne-km (target: <80). Consolidating Delhi-Jaipur corridor and night-window departures deliver fastest ROI with zero operational disruption."
   },
   "meta": {
-    "model": "CO₂ = dist_km × (weight/capacity) × 0.21 kg/km",
-    "emissionFactor": 0.21,
+    "model": "CO₂ = dist_km × (weight/capacity) × truck_ef — truck-specific IPCC AR6/CPCB factors",
     "latency_ms": 1843,
-    "agent": "CarbonIntelligenceAgent/1.0"
+    "agent": "CarbonIntelligenceAgent/2.0"
   }
 }
 ```
 
-**Emission model:** `CO₂ (kg) = distance_km × (weight_kg / max_kg) × 0.21`  
-Source: IPCC AR6 India road freight emission factor.
+**Emission model:** `CO₂ (kg) = distance_km × (weight_kg / max_kg) × truck_emission_factor`
+
+**Truck emission factors (IPCC AR6 + CPCB India):**
+
+| Truck type | Example models | EF (kg CO₂/km) |
+|------------|---------------|-----------------|
+| Mini LCV   | Tata Ace Gold, Mahindra Bolero Pickup | 0.12 |
+| Medium     | Eicher Pro 2049, Tata Ultra T.7 | 0.21 |
+| Heavy      | BharatBenz, Ashok Leyland 2518 | 0.26 |
+| EV         | Any electric model | 0.05 |
+| Default    | Unknown / not provided | 0.21 |
+
+**Opportunity types:**
+
+| `type` | Trigger | CO₂ saving |
+|--------|---------|-----------|
+| `consolidation` | Load factor < 75% | Proportional to empty capacity |
+| `scheduling` | HIGH-risk night window | ~12% fuel reduction |
+| `intermodal` | Distance > 500 km | ~70% CO₂ vs road |
+| `ev_route` | Urban < 150 km | ~76% CO₂ vs diesel |
+| `vehicle_upgrade` | Top emitter, BS6 eligible | ~19% CO₂ reduction |
 
 **Risk thresholds:**
 
@@ -746,7 +800,7 @@ async function fairDispatch(drivers: any[], routes: any[]) {
 async function carbonReport(shipments: any[]) {
   const res = await fetch(`${FAIRRELAY_BRAIN}/lorri/carbon/estimate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
     body: JSON.stringify({ shipments }),
   });
   return res.json();
@@ -774,6 +828,7 @@ async def carbon_report(shipments: list) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             f"{BRAIN_URL}/lorri/carbon/estimate",
+            headers={"x-api-key": API_KEY},
             json={"shipments": shipments},
         )
         return resp.json()
@@ -1344,9 +1399,11 @@ Returns the current state of the route continuous learning system — the adapti
 
 ### 3.4 Carbon Intelligence Agent
 
-See [Section 2.4](#24-post-lorricarbonestimat) for the LoRRI-facing endpoint.
+See [Section 2.4](#24-post-lorricarbonestimat) for the full LoRRI-facing endpoint documentation.
 
-The same endpoint is available without auth at: `POST /lorri/carbon/estimate`
+The same endpoint is also available via the LoRRI namespace at: `POST /lorri/carbon/estimate` (requires `x-api-key`)
+
+**v2.0 additions:** truck-specific EFs, `fuel_saved_inr`, `co2_intensity_g_tkm` per shipment; `fuelSavedINR`, `treesEquivalent`, `emissionIntensity`, `carbonCreditINR` in summary; `saving_inr` on opportunities; `intermodal` and `ev_route` opportunity types.
 
 ---
 
@@ -1683,10 +1740,66 @@ Base URL: `https://fairrelay-backend.onrender.com`
 #### `POST /api/deliveries/create`
 ```json
 // Request
-{ "shipment_id": "SH-001", "driver_id": "drv_001", "route_id": "rt_001" }
+{
+  "pickupLocation": "Mumbai JNPT",
+  "pickupLat": 19.076,
+  "pickupLng": 72.877,
+  "pickupTime": "2026-05-21T08:00:00Z",
+  "deliveryLocation": "Pune Industrial",
+  "deliveryLat": 18.52,
+  "deliveryLng": 73.856,
+  "deliveryTime": "2026-05-21T14:00:00Z",
+  "cargoType": "General",
+  "cargoWeight": 800,
+  "dispatcherId": "usr_001",
+  "timeWindowStart": "2026-05-21T08:00:00Z",
+  "timeWindowEnd": "2026-05-21T12:00:00Z"
+}
 
 // Response 201
-{ "id": "dlv_001", "status": "ASSIGNED" }
+{ "success": true, "id": "dlv_001", "status": "PENDING" }
+```
+
+#### `GET /api/deliveries/unassigned`
+Returns deliveries not yet assigned to a driver, scoped to a courier company.
+
+```bash
+GET /api/deliveries/unassigned?courierCompanyId=20c97585-a16d-45e7-8d5f-0ef5ce85b896
+```
+**Auth:** JWT required
+
+```json
+// Response 200
+[
+  {
+    "id": "dlv_001",
+    "pickupLocation": "Mumbai JNPT",
+    "pickupLat": 19.076,
+    "pickupLng": 72.877,
+    "deliveryLocation": "Pune Industrial",
+    "deliveryLat": 18.52,
+    "deliveryLng": 73.856,
+    "cargoWeight": 800,
+    "status": "PENDING"
+  }
+]
+```
+
+#### `POST /api/routes/assign-multi-stop`
+Assign multiple deliveries to a driver as a single multi-stop route.
+
+**Auth:** JWT required
+
+```json
+// Request
+{
+  "driverId": "drv_001",
+  "deliveryIds": ["dlv_001", "dlv_002", "dlv_003"],
+  "routeOrder": ["dlv_001", "dlv_003", "dlv_002"]
+}
+
+// Response 200
+{ "success": true, "routeId": "rt_001", "assignedCount": 3 }
 ```
 
 #### `POST /api/deliveries/:id/start`
@@ -1765,6 +1878,50 @@ Base URL: `https://fairrelay-backend.onrender.com`
 }
 ```
 
+#### `GET /api/wellness/cognitive-fleet`
+Fleet-wide cognitive load summary across all drivers.
+
+```json
+// Response 200
+{
+  "fleet": [
+    { "driver_id": "drv_001", "name": "Rajan Kumar", "cognitive_load_score": 62, "fatigue_level": "MODERATE" },
+    { "driver_id": "drv_002", "name": "Suresh Pillai", "cognitive_load_score": 88, "fatigue_level": "HIGH" }
+  ],
+  "summary": {
+    "avg_cognitive_load": 75,
+    "high_risk_count": 1,
+    "fit_count": 1
+  }
+}
+```
+
+#### `GET /api/packages`
+```json
+// Response 200
+[
+  { "id": "PKG-1234", "cargoType": "General", "status": "PENDING", "pickupLocation": "Mumbai JNPT", "deliveryLocation": "Pune Industrial" }
+]
+```
+
+#### `GET /api/packages/history-web`
+Package delivery history formatted for the web dashboard.
+
+```json
+// Response 200
+[
+  {
+    "id": "PKG-1234",
+    "cargoType": "General",
+    "status": "DELIVERED",
+    "pickupLocation": "Mumbai JNPT",
+    "deliveryLocation": "Pune Industrial",
+    "deliveredAt": "2026-05-20T14:30:00Z",
+    "driverName": "Rajan Kumar"
+  }
+]
+```
+
 ---
 
 ### 4.6 Consolidation (Proxy)
@@ -1776,6 +1933,30 @@ Proxies to `https://fairrelay-brain-gdm1.onrender.com/api/v1/consolidate` with l
 
 #### `POST /api/consolidation/simulate`
 Proxies to Brain `/api/v1/consolidate/simulate`.
+
+#### `POST /api/routes/dynamic-insert`
+Proxies to Brain `POST /api/v1/routes/dynamic-insert`. Insert a new stop into an existing route at the cheapest position. Full request/response schema in [Section 3.3](#33-route-optimization).
+
+```json
+// Request
+{
+  "route_stops": [
+    { "id": "s1", "latitude": 19.076, "longitude": 72.877 },
+    { "id": "s2", "latitude": 18.520, "longitude": 73.856 }
+  ],
+  "new_stop": { "id": "new_s", "latitude": 18.990, "longitude": 73.120 },
+  "warehouse_lat": 19.076,
+  "warehouse_lng": 72.877
+}
+
+// Response 200
+{
+  "success": true,
+  "new_order": ["s1", "new_s", "s2"],
+  "insertion_position": 1,
+  "additional_distance_km": 13.5
+}
+```
 
 #### `GET /api/consolidation/history`
 ```json
@@ -1991,6 +2172,37 @@ Absorption = peer-to-peer truck handover when a driver cannot complete a deliver
 { "id": "ewb_002", "ewb_number": "EWB2026051600123", "valid_until": "2026-05-23" }
 ```
 
+#### `PUT /api/eway-bills/:id`
+```json
+// Request — partial update, send only fields to change
+{
+  "vehicle": "MH-12-AB-9999",
+  "valid": "2026-06-30",
+  "status": "Active"
+}
+
+// Response 200
+{ "id": "ewb_001", "updated_at": "2026-05-21T10:00:00Z" }
+```
+
+#### `DELETE /api/eway-bills/:id`
+```json
+// Response 200
+{ "success": true, "message": "E-Way Bill deleted." }
+```
+
+#### `GET /api/eway-bills/stats`
+```json
+// Response 200
+{ "active": 6, "expireSoon": 1, "expired": 1 }
+```
+
+#### `DELETE /api/virtual-hubs/:id`
+```json
+// Response 200
+{ "success": true }
+```
+
 ---
 
 ### 4.10 API Keys
@@ -2006,12 +2218,13 @@ Absorption = peer-to-peer truck handover when a driver cannot complete a deliver
 
 > **Important:** The `api_key` value is shown only once at creation. Store it securely.
 
-#### `GET /api/keys?userId=usr_001`
+#### `GET /api/keys`
+**Auth:** `Authorization: Bearer <token>`
 ```json
 // Response 200
 {
   "keys": [
-    { "id": "key_001", "name": "LoRRI Production Key", "last_used": "2026-05-16T08:30:00Z", "scopes": ["allocate"] }
+    { "id": "key_001", "name": "LoRRI Production Key", "last_used": "2026-05-16T08:30:00Z", "active": true }
   ]
 }
 ```
@@ -2054,14 +2267,235 @@ All errors follow this shape:
 
 | Endpoint group | Limit | Window |
 |----------------|-------|--------|
-| `/lorri/allocate`, `/lorri/wellness`, `/lorri/stats` | 100 req | per API key per minute |
+| `/lorri/allocate`, `/lorri/wellness`, `/lorri/stats`, `/lorri/carbon/estimate` | 100 req | per API key per minute |
 | `/api/auth/*`, `/api/otp/*` | 30 req | per IP per minute |
 | `/api/v1/*` (Brain core) | No limit | — |
-| `/lorri/health`, `/lorri/carbon/estimate` | No limit | — |
+| `/lorri/health` | No limit | — |
 | `/v1/*` (Backend gateway) | No limit | — |
 
 Rate limit exceeded returns `429` with header `Retry-After: 60`.
 
 ---
 
-*Generated: 2026-05-16 · FairRelay v1.0 · Brain: `fairrelay-brain-gdm1.onrender.com` · Backend: `fairrelay-backend.onrender.com`*
+### 4.11 Dashboard
+
+Ops dashboard KPI and activity endpoints. All require JWT.
+
+#### `GET /api/dashboard/stats`
+```json
+// Response 200
+{
+  "pendingRequests": 12,
+  "activeShipments": 47,
+  "drivers": 8,
+  "fleetUtilization": 73
+}
+```
+
+#### `GET /api/dashboard/activity`
+Weekly shipment activity (last 7 days).
+
+```json
+// Response 200
+[
+  { "day": "Mon", "requests": 14 },
+  { "day": "Tue", "requests": 21 },
+  { "day": "Wed", "requests": 18 }
+]
+```
+
+#### `GET /api/dashboard/live-tracking-web`
+Live vehicle positions formatted for the web dashboard.
+
+```json
+// Response 200
+[
+  {
+    "id": "drv_001",
+    "name": "Rajan Kumar",
+    "plate": "MH-12-AB-3456",
+    "lat": 19.076,
+    "lng": 72.877,
+    "status": "EN_ROUTE",
+    "speed": 48
+  }
+]
+```
+
+#### `GET /api/dashboard/live-tracking-gps`
+Raw GPS telemetry (higher frequency, for native mobile clients).
+
+```json
+// Response 200
+[
+  { "driverId": "drv_001", "lat": 19.076, "lng": 72.877, "heading": 245, "timestamp": "2026-05-21T09:12:00Z" }
+]
+```
+
+#### `GET /api/dashboard/recent-absorptions`
+Most recent absorption (peer handover) events for the dashboard feed.
+
+```json
+// Response 200
+[
+  {
+    "id": "abs_001",
+    "from_driver": "Rajan Kumar",
+    "to_driver": "Suresh Pillai",
+    "route": "Mumbai → Pune",
+    "weight_kg": 800,
+    "status": "COMPLETED",
+    "created_at": "2026-05-21T08:45:00Z"
+  }
+]
+```
+
+---
+
+### 4.12 Dispatch (AI Proxy)
+
+The backend's `/api/dispatch/*` namespace wraps the Brain's allocation pipeline and exposes it to the dashboard with JWT auth. Use these endpoints from the ops dashboard; use `/lorri/allocate` for LoRRI TMS integration.
+
+#### `GET /api/dispatch/health`
+Brain connectivity check. Returns connected/offline status.
+
+```json
+// Response 200
+{
+  "status": "connected",
+  "brain_url": "https://fairrelay-brain-gdm1.onrender.com",
+  "latency_ms": 312,
+  "agents_available": 8
+}
+```
+
+#### `POST /api/dispatch/allocate`
+Proxies to Brain `POST /api/v1/allocate/langgraph`. Full request/response schema in [Section 3.1](#31-allocation--langgraph-pipeline).
+
+**Auth:** JWT required
+
+#### `GET /api/dispatch/runs`
+List all allocation runs.
+
+```json
+// Response 200
+[
+  {
+    "id": "run_abc123",
+    "createdAt": "2026-05-21T08:00:00Z",
+    "status": "SUCCESS",
+    "finalGini": 0.034,
+    "fairnessGrade": "A+",
+    "driverCount": 5,
+    "packageCount": 8
+  }
+]
+```
+
+#### `GET /api/dispatch/runs/:runId`
+Single allocation run detail including per-driver assignments.
+
+```json
+// Response 200
+{
+  "id": "run_abc123",
+  "createdAt": "2026-05-21T08:00:00Z",
+  "status": "SUCCESS",
+  "finalGini": 0.034,
+  "allocations": [
+    { "driverName": "Rajan Kumar", "packages": 4, "workloadScore": 65.3, "explanation": "..." }
+  ],
+  "agentEvents": [
+    { "agent": "fairness_manager", "message": "ACCEPT — Gini 0.034" }
+  ]
+}
+```
+
+#### `GET /api/dispatch/drivers`
+Drivers enriched with dispatch history (workload scores, recent run stats).
+
+```json
+// Response 200
+[
+  {
+    "id": "drv_001",
+    "name": "Rajan Kumar",
+    "recentWorkloadScore": 65.3,
+    "totalRuns": 14,
+    "avgFairnessScore": 0.91
+  }
+]
+```
+
+#### `GET /api/dispatch/drivers/:id`
+Single driver dispatch profile.
+
+#### `GET /api/dispatch/routes/:id`
+Route detail for a specific dispatch run assignment.
+
+#### `POST /api/dispatch/feedback`
+Submit dispatcher feedback on an allocation run.
+
+```json
+// Request
+{
+  "runId": "run_abc123",
+  "rating": 4,
+  "notes": "Good distribution, Rajan's route was slightly heavy"
+}
+
+// Response 201
+{ "success": true }
+```
+
+#### `POST /api/dispatch/wellness-check`
+Run wellness scoring on a list of drivers before dispatch.
+
+```json
+// Request
+{ "drivers": [ { "id": "drv_001", "name": "Rajan", "hoursToday": 5, "hoursSinceRest": 4, "isIll": false } ] }
+
+// Response 200
+{
+  "drivers": [
+    { "id": "drv_001", "wellnessScore": 68, "riskLevel": "MEDIUM", "fitForDispatch": true, "recommendation": "Monitor — 5h on duty" }
+  ]
+}
+```
+
+#### `POST /api/dispatch/carbon-calculate`
+Calculate carbon impact for a set of routes.
+
+```json
+// Request
+{ "routes": [ { "id": "rt_001", "distance_km": 149, "weight_kg": 800 } ] }
+
+// Response 200
+{
+  "routes": [
+    { "id": "rt_001", "co2_kg": 12.5, "saved_vs_baseline_kg": 18.8 }
+  ],
+  "total_co2_kg": 12.5,
+  "total_saved_kg": 18.8
+}
+```
+
+#### `POST /api/dispatch/night-safety-filter`
+Apply night-time wellness constraints to a driver roster.
+
+```json
+// Request
+{ "drivers": [ { "id": "drv_001", "hoursToday": 8 } ], "currentHour": 22 }
+
+// Response 200
+{
+  "isNightMode": true,
+  "drivers": [
+    { "id": "drv_001", "fitForNight": false, "reason": "Exceeded 8h on duty" }
+  ]
+}
+```
+
+---
+
+*Generated: 2026-05-21 · FairRelay v1.0 · Brain: `fairrelay-brain-gdm1.onrender.com` · Backend: `fairrelay-backend.onrender.com` · CarbonIntelligenceAgent/2.0*

@@ -6,6 +6,8 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
+export const DEMO_TOKEN = "fairrelay-demo-dispatcher";
+
 interface User {
   id: string;
   name: string;
@@ -60,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = (newToken: string, newUser: User) => {
-    const demo = newToken === "test-token-dev";
+    const demo = newToken === DEMO_TOKEN;
     setToken(newToken);
     setUser(newUser);
     setIsDemo(demo);

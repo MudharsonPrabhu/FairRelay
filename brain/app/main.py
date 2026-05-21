@@ -142,7 +142,7 @@ app.include_router(driver_api_router, prefix=settings.api_prefix)
 app.include_router(admin_router, prefix=settings.api_prefix)
 app.include_router(admin_learning_router, prefix=settings.api_prefix)
 
-# Consolidation (5-agent pipeline)
+# Consolidation (8-agent pipeline)
 app.include_router(consolidation_router, prefix=settings.api_prefix)
 
 # SSE agent events

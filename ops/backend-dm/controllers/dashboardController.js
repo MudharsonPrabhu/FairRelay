@@ -55,10 +55,11 @@ exports.getStats = async (req, res) => {
         const activeDriversCount = await prisma.user.count({ where: { role: 'DRIVER', status: 'ON_DUTY' } });
         const totalVehicles = await prisma.truck.count();
         const totalCapacityResult = await prisma.truck.aggregate({ _sum: { capacity: true } });
-        const activeCapacityResult = await prisma.truck.aggregate({
-            _sum: { capacity: true },
-            where: { owner: { status: 'ON_DUTY' } }
+        const activeTrucks = await prisma.truck.findMany({
+            where: { owner: { status: 'ON_DUTY' } },
+            select: { capacity: true }
         });
+        const activeCapacity = activeTrucks.reduce((sum, t) => sum + (t.capacity || 0), 0);
 
         res.json({
             pendingRequests: pendingRequests.toString(),
@@ -67,7 +68,7 @@ exports.getStats = async (req, res) => {
             fleetUtilization: "87%",
             totalVehicles,
             totalCapacity: totalCapacityResult._sum.capacity || 0,
-            activeCapacity: activeCapacityResult._sum.capacity || 0,
+            activeCapacity,
             unit: 'kg',
             dispatchRuns: 48,
             giniToday: 0.12,
