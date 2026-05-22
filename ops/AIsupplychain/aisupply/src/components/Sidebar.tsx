@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, BarChart3, Brain, Layers, Route,
+  LayoutDashboard, BarChart3, Brain, Route,
   Users, Package, Navigation, Repeat2,
   Leaf, FileText, Key, Settings, Search,
   LogOut, Shield,
@@ -32,8 +32,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'AI ENGINES',
     items: [
       { icon: Brain,  label: 'Fair Dispatch',      to: '/fair-dispatch',      shortcut: '⌘2', aiTag: true },
-      { icon: Layers, label: 'Load Consolidation', to: '/load-consolidation', shortcut: '⌘4', aiTag: true },
-      { icon: Route,  label: 'Route Optimizer',    to: '/route-optimization', shortcut: '⌘3', aiTag: true },
+      { icon: Route,  label: 'Load Consolidation', to: '/route-optimization', shortcut: '⌘3', aiTag: true },
     ],
   },
   {

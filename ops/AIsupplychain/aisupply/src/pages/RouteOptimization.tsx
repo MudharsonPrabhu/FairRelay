@@ -16,7 +16,7 @@ import {
   Layers, Play, Truck, TrendingUp, Leaf, Route, Package, Zap, FlaskConical,
   Check, ArrowRight, Brain, Sliders, ToggleLeft, ToggleRight, Lightbulb,
   DollarSign, Target, Award, BookOpen, Loader2, CheckCircle, Activity,
-  ChevronRight, Cpu, Sparkles, Navigation, Map as MapIcon, BarChart3, RefreshCw,
+  Cpu, Sparkles, Navigation, Map as MapIcon, BarChart3, RefreshCw,
   PlusCircle, AlertTriangle,
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
@@ -33,7 +33,10 @@ L.Icon.Default.mergeOptions({
 });
 
 // ── Constants ───────────────────────────────────────────────────────────────
-const BRAIN_URL = 'https://fairrelay-brain-gdm1.onrender.com';
+// Prefer local Brain; fall back to deployed if unreachable
+const BRAIN_URL_LOCAL  = 'http://localhost:8000';
+const BRAIN_URL_REMOTE = 'https://fairrelay-brain-gdm1.onrender.com';
+const BACKEND_URL      = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 const GROUP_COLORS = [
   '#f97316', '#3b82f6', '#10b981', '#f59e0b', '#ec4899',
@@ -44,8 +47,11 @@ const AGENT_PIPELINE = [
   { key: 'geo',      name: 'GeoClusteringAgent',       badge: 'KMeans',    color: '#3b82f6', desc: 'Silhouette-optimal KMeans on 4D pickup+drop coords' },
   { key: 'time',     name: 'TimeWindowAgent',           badge: 'TW Filter', color: '#f59e0b', desc: 'Delivery window overlap with configurable tolerance' },
   { key: 'capacity', name: 'CapacityOptimizationAgent', badge: 'OR-Tools',  color: '#ec4899', desc: 'CP-SAT integer programming — geo-group hard constraint' },
-  { key: 'scoring',  name: 'ScoringConfidenceAgent',    badge: 'Haversine', color: '#10b981', desc: 'Multi-stop tour distance + AI confidence scoring' },
-  { key: 'learning', name: 'ContinuousLearningAgent',   badge: 'RL + LLM',  color: '#8b5cf6', desc: 'Q-learning + Gemini 2.5 Flash real insights' },
+  { key: 'scoring',  name: 'ScoringConfidenceAgent',    badge: 'Scoring',   color: '#10b981', desc: 'Multi-stop tour distance + AI confidence scoring' },
+  { key: 'route',    name: 'RouteOptimizerAgent',       badge: '2-opt TSP', color: '#06b6d4', desc: 'Priority-aware nearest-neighbour + 2-opt local search' },
+  { key: 'carbon',   name: 'CarbonIntelligenceAgent',   badge: 'Carbon',    color: '#84cc16', desc: 'IPCC AR6 truck-specific CO₂ + carbon credit estimation' },
+  { key: 'gemini',   name: 'GeminiInsightsAgent',       badge: 'Gemini',    color: '#a855f7', desc: 'Gemini 2.5 Flash — corridor insights & LLM narratives' },
+  { key: 'learning', name: 'ContinuousLearningAgent',   badge: 'Q-Learn',   color: '#8b5cf6', desc: 'Q-learning RL — auto-tunes radius & time tolerance' },
 ];
 
 const SCENARIOS = [
@@ -434,9 +440,9 @@ function OptimizationGrade({ score }: { score: number }) {
 function AgentPipeline({ steps, loading, hasGemini }: { steps: any[]; loading: boolean; hasGemini: boolean }) {
   return (
     <div className="bg-eco-card border border-eco-card-border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-4">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-          <Activity className="w-3.5 h-3.5 text-purple-400" /> 5-Agent Execution Pipeline
+          <Activity className="w-3.5 h-3.5 text-purple-400" /> 8-Agent Execution Pipeline
         </h3>
         {hasGemini && (
           <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 font-semibold">
@@ -444,35 +450,76 @@ function AgentPipeline({ steps, loading, hasGemini }: { steps: any[]; loading: b
           </span>
         )}
       </div>
-      <div className="flex items-start gap-1 overflow-x-auto pb-1">
+      <div className="grid grid-cols-4 gap-2">
         {AGENT_PIPELINE.map((agent, i) => {
           const stepData = steps.find(s => s.agent === agent.name || s.agent?.includes(agent.key));
           const isDone = !loading && steps.length > 0;
           const isRunning = loading;
           return (
-            <Fragment key={agent.key}>
-              <div className={`flex-shrink-0 rounded-xl border p-3 min-w-[110px] transition-all ${
-                isDone ? 'border-opacity-30 bg-opacity-10' : isRunning ? 'border-opacity-50 animate-pulse' : 'border-white/5 bg-white/2'
-              }`} style={{ borderColor: isDone || isRunning ? agent.color : undefined, backgroundColor: isDone ? `${agent.color}0d` : isRunning ? `${agent.color}1a` : undefined }}>
-                <div className="flex items-center gap-1.5 mb-1.5">
-                  {isDone ? <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: agent.color }} /> :
-                   isRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" style={{ color: agent.color }} /> :
-                   <div className="w-3.5 h-3.5 rounded-full border border-white/20 flex-shrink-0" />}
-                  <span className="text-[10px] font-bold leading-none" style={{ color: isDone || isRunning ? agent.color : '#6b7280' }}>{agent.badge}</span>
-                </div>
-                <div className="text-[9px] text-gray-500 leading-tight">{agent.desc}</div>
-                {stepData?.duration_ms != null && (
-                  <div className="text-[9px] font-mono mt-1.5 font-semibold" style={{ color: agent.color }}>{stepData.duration_ms.toFixed(0)}ms</div>
-                )}
+            <div
+              key={agent.key}
+              className={`relative rounded-xl border p-3 transition-all duration-300 ${
+                isDone
+                  ? 'border-opacity-40 shadow-sm'
+                  : isRunning
+                  ? 'border-opacity-60 animate-pulse'
+                  : 'border-white/8 bg-white/[0.02]'
+              }`}
+              style={{
+                borderColor: isDone || isRunning ? agent.color : 'rgba(255,255,255,0.08)',
+                backgroundColor: isDone ? `${agent.color}12` : isRunning ? `${agent.color}1e` : undefined,
+                boxShadow: isDone ? `0 0 12px ${agent.color}1a` : undefined,
+              }}
+            >
+              {/* Step number badge */}
+              <div
+                className="absolute -top-2 -left-2 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black border"
+                style={{
+                  background: isDone || isRunning ? agent.color : '#1f2937',
+                  borderColor: isDone || isRunning ? agent.color : 'rgba(255,255,255,0.12)',
+                  color: isDone || isRunning ? '#fff' : '#6b7280',
+                }}
+              >
+                {i + 1}
               </div>
-              {i < AGENT_PIPELINE.length - 1 && <ChevronRight className="w-4 h-4 text-gray-700 flex-shrink-0 mt-4" />}
-            </Fragment>
+
+              {/* Status icon + badge */}
+              <div className="flex items-center gap-1.5 mb-2">
+                {isDone ? (
+                  <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: agent.color }} />
+                ) : isRunning ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" style={{ color: agent.color }} />
+                ) : (
+                  <div className="w-3.5 h-3.5 rounded-full border border-white/20 flex-shrink-0" />
+                )}
+                <span
+                  className="text-[10px] font-bold leading-none tracking-wide"
+                  style={{ color: isDone || isRunning ? agent.color : '#6b7280' }}
+                >
+                  {agent.badge}
+                </span>
+              </div>
+
+              {/* Description */}
+              <div className="text-[9px] text-gray-500 leading-tight">{agent.desc}</div>
+
+              {/* Duration */}
+              {stepData?.duration_ms != null && (
+                <div
+                  className="text-[9px] font-mono mt-1.5 font-semibold"
+                  style={{ color: agent.color }}
+                >
+                  {stepData.duration_ms.toFixed(0)}ms
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
     </div>
   );
 }
+
 
 // ── SVG helpers for Mumbai route map ────────────────────────────────────────
 function toSvg(lat: number, lng: number): [number, number] {
@@ -489,10 +536,16 @@ export function RouteOptimization() {
 
   const [activeTab, setActiveTab] = useState<'consolidation' | 'route'>('consolidation');
 
+  // ── Live data state ──
+  const [liveShipments, setLiveShipments] = useState<Shipment[]>([]);
+  const [liveTrucks, setLiveTrucks]       = useState<TruckDef[]>([]);
+  const [dataSource, setDataSource]       = useState<'live' | 'demo'>('demo');
+  const [dataLoading, setDataLoading]     = useState(false);
+
   // ── Consolidation state ──
   const [loading, setLoading]           = useState(false);
   const [consResult, setConsResult]     = useState<any>(null);
-  const [apiUsed, setApiUsed]           = useState<'brain' | 'local' | null>(null);
+  const [apiUsed, setApiUsed]           = useState<'brain-local' | 'brain-remote' | 'backend' | 'local' | null>(null);
   const [radiusKm, setRadiusKm]         = useState(30);
   const [timeTol, setTimeTol]           = useState(120);
   const [scenarioResults, setScenarioResults] = useState<any[]>([]);
@@ -514,45 +567,130 @@ export function RouteOptimization() {
 
   useEffect(() => { if (routeResult) setAnimKey(k => k + 1); }, [routeResult]);
 
+  // ── Fetch live shipments + trucks from backend-dm ────────────────────────
+  const fetchLiveData = useCallback(async () => {
+    setDataLoading(true);
+    try {
+      const token = localStorage.getItem('authToken') ?? '';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const [shipRes, truckRes] = await Promise.allSettled([
+        fetch(`${BACKEND_URL}/api/shipments`, { headers, signal: AbortSignal.timeout(8000) }),
+        fetch(`${BACKEND_URL}/api/trucks`,    { headers, signal: AbortSignal.timeout(8000) }),
+      ]);
+
+      // ── Map shipments from DB schema → Brain schema ──
+      let mappedShipments: Shipment[] = [];
+      if (shipRes.status === 'fulfilled' && shipRes.value.ok) {
+        const raw = await shipRes.value.json();
+        const arr: any[] = Array.isArray(raw) ? raw : (raw.data ?? raw.shipments ?? []);
+        mappedShipments = arr
+          .filter((s: any) => s.pickupLat != null && s.dropLat != null)
+          .map((s: any, i: number) => ({
+            id:               s.id ?? `SH-${String(i + 1).padStart(3, '0')}`,
+            pickupLat:        parseFloat(s.pickupLat),
+            pickupLng:        parseFloat(s.pickupLng),
+            dropLat:          parseFloat(s.dropLat),
+            dropLng:          parseFloat(s.dropLng),
+            pickupLocation:   s.pickupLocation ?? s.pickup_location ?? 'Pickup',
+            dropLocation:     s.dropLocation   ?? s.drop_location   ?? 'Drop',
+            weight:           parseFloat(s.weight ?? s.weightKg ?? 500),
+            volume:           parseFloat(s.volume ?? s.volumeCbm ?? 2.0),
+            timeWindowStart:  s.timeWindowStart ?? s.scheduledPickup ?? undefined,
+            timeWindowEnd:    s.timeWindowEnd   ?? s.scheduledDrop   ?? undefined,
+            priority:         (s.priority as 'HIGH' | 'MEDIUM' | 'LOW') ?? 'MEDIUM',
+          }));
+      }
+
+      // ── Map trucks from DB schema → Brain schema ──
+      let mappedTrucks: TruckDef[] = [];
+      if (truckRes.status === 'fulfilled' && truckRes.value.ok) {
+        const raw = await truckRes.value.json();
+        const arr: any[] = Array.isArray(raw) ? raw : (raw.data ?? raw.trucks ?? []);
+        mappedTrucks = arr.map((t: any, i: number) => ({
+          id:        t.id ?? `TRK-${String(i + 1).padStart(3, '0')}`,
+          name:      t.model ?? t.name ?? t.licensePlate ?? `Truck ${i + 1}`,
+          maxWeight: parseFloat(t.maxWeight ?? t.capacity ?? 2000),
+          maxVolume: parseFloat(t.maxVolume ?? t.volumeCapacity ?? 8),
+        }));
+      }
+
+      if (mappedShipments.length > 0) {
+        setLiveShipments(mappedShipments);
+        setDataSource('live');
+      } else {
+        setDataSource('demo');
+      }
+      if (mappedTrucks.length > 0) setLiveTrucks(mappedTrucks);
+    } catch {
+      setDataSource('demo');
+    } finally {
+      setDataLoading(false);
+    }
+  }, []);
+
+  // Fetch live data on mount
+  useEffect(() => { if (!isDemo) fetchLiveData(); }, [isDemo, fetchLiveData]);
+
   // ── Run consolidation ────────────────────────────────────────────────────
   const runConsolidation = useCallback(async () => {
     setLoading(true);
     let data: any = null;
 
+    // Use live data if available, else fall back to demo dataset
+    const shipments = (liveShipments.length > 0) ? liveShipments : DEMO_SHIPMENTS;
+    const trucks    = (liveTrucks.length > 0)    ? liveTrucks    : DEMO_TRUCKS;
+    const payload   = { shipments, trucks, options: { maxGroupRadiusKm: radiusKm, timeWindowToleranceMinutes: timeTol } };
+
     if (!isDemo) {
-      // Primary: call brain directly (gets real agentSteps + Gemini insights)
+      // ① Try local Brain first (fastest, no cold-start)
       try {
-        const res = await fetch(`${BRAIN_URL}/api/v1/consolidate`, {
+        const res = await fetch(`${BRAIN_URL_LOCAL}/api/v1/consolidate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shipments: DEMO_SHIPMENTS, trucks: DEMO_TRUCKS, options: { maxGroupRadiusKm: radiusKm, timeWindowToleranceMinutes: timeTol } }),
-          signal: AbortSignal.timeout(25000),
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30000),
         });
-        if (res.ok) { data = await res.json(); setApiUsed('brain'); }
-      } catch { /* fall through */ }
+        if (res.ok) { data = await res.json(); setApiUsed('brain-local'); }
+      } catch { /* fall through to remote */ }
 
-      // Fallback: backend-dm proxy
+      // ② Try remote Brain (deployed Render instance)
       if (!data) {
         try {
-          const apiResult = await runConsolidationOptimize({ shipments: DEMO_SHIPMENTS, trucks: DEMO_TRUCKS, options: { maxGroupRadiusKm: radiusKm, timeWindowToleranceMinutes: timeTol } });
-          if (apiResult?.success && apiResult?.data) { data = apiResult.data; setApiUsed('brain'); }
+          const res = await fetch(`${BRAIN_URL_REMOTE}/api/v1/consolidate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(30000),
+          });
+          if (res.ok) { data = await res.json(); setApiUsed('brain-remote'); }
+        } catch { /* fall through */ }
+      }
+
+      // ③ Try backend-dm proxy (consolidation controller)
+      if (!data) {
+        try {
+          const apiResult = await runConsolidationOptimize(payload);
+          if (apiResult?.success && apiResult?.data) { data = apiResult.data; setApiUsed('backend'); }
         } catch { /* fall through */ }
       }
     }
 
     if (!data) {
-      // Simulate 5-agent pipeline execution time so the animation is visible
-      await new Promise(r => setTimeout(r, 2400));
-      data = runLocalConsolidation(DEMO_SHIPMENTS, DEMO_TRUCKS, { maxGroupRadiusKm: radiusKm, timeWindowToleranceMinutes: timeTol });
+      // ④ Local JS engine — always works offline
+      await new Promise(r => setTimeout(r, 1800));
+      data = runLocalConsolidation(shipments, trucks, { maxGroupRadiusKm: radiusKm, timeWindowToleranceMinutes: timeTol });
       setApiUsed('local');
-      if (!isDemo) showToast('Offline Mode', 'Brain unreachable — using local engine', 'info');
+      if (!isDemo) showToast('Offline Mode', 'All Brain endpoints unreachable — using local engine', 'info');
     } else {
-      showToast('AI Brain', 'Consolidation complete with Gemini insights', 'success');
+      const src = apiUsed === 'brain-local' ? 'Local Brain (localhost:8000)' : apiUsed === 'brain-remote' ? 'Remote Brain' : 'Backend Proxy';
+      showToast('AI Brain ✓', `Consolidation complete — ${src} · ${dataSource === 'live' ? 'Live DB data' : 'Demo data'}`, 'success');
     }
 
     setConsResult(data);
     setLoading(false);
-  }, [radiusKm, timeTol, isDemo, showToast]);
+  }, [radiusKm, timeTol, isDemo, showToast, liveShipments, liveTrucks, dataSource, apiUsed]);
 
   useEffect(() => { runConsolidation(); }, []);
 
@@ -763,12 +901,37 @@ export function RouteOptimization() {
           {/* Action Bar */}
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3">
+              {/* Data source badge */}
+              <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium ${
+                dataLoading
+                  ? 'bg-blue-500/10 border-blue-500/20 text-blue-300'
+                  : dataSource === 'live'
+                  ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300'
+                  : 'bg-gray-500/10 border-gray-500/20 text-gray-400'
+              }`}>
+                {dataLoading
+                  ? <><Loader2 className="w-3 h-3 animate-spin" /> Fetching live data…</>
+                  : dataSource === 'live'
+                  ? <><span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" /> Live DB · {liveShipments.length} shipments · {liveTrucks.length} trucks</>
+                  : <><span className="w-1.5 h-1.5 rounded-full bg-gray-500" /> Demo Data · {DEMO_SHIPMENTS.length} shipments</>}
+              </span>
+
+              {/* Brain engine badge */}
               {apiUsed && (
                 <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border font-medium ${
-                  apiUsed === 'brain' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                  apiUsed === 'brain-local'  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+                  apiUsed === 'brain-remote' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' :
+                  apiUsed === 'backend'      ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' :
+                                              'bg-amber-500/10 border-amber-500/20 text-amber-400'
                 }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${apiUsed === 'brain' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                  {apiUsed === 'brain' ? 'FairRelay Brain' : isDemo ? 'Demo Engine' : 'Local Engine'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    apiUsed === 'brain-local' ? 'bg-emerald-400 animate-pulse' :
+                    apiUsed === 'brain-remote' ? 'bg-blue-400 animate-pulse' :
+                    apiUsed === 'backend' ? 'bg-orange-400' : 'bg-amber-400'
+                  }`} />
+                  {apiUsed === 'brain-local'  ? '🧠 Brain · localhost:8000' :
+                   apiUsed === 'brain-remote' ? '🧠 Brain · Remote' :
+                   apiUsed === 'backend'      ? '⚙️ Backend Proxy' : '📦 Local Engine'}
                 </span>
               )}
               {hasGemini && (
@@ -778,14 +941,26 @@ export function RouteOptimization() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => { const rs = SCENARIOS.map(sc => ({ name: sc.name, ...runLocalConsolidation(DEMO_SHIPMENTS, DEMO_TRUCKS, { maxGroupRadiusKm: sc.maxGroupRadiusKm, timeWindowToleranceMinutes: sc.timeWindowToleranceMinutes }) })); setScenarioResults(rs); setShowSim(true); }}
+              {/* Refresh live data */}
+              {!isDemo && (
+                <button onClick={fetchLiveData} disabled={dataLoading}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-cyan-500/30 bg-cyan-600/10 text-cyan-300 text-sm font-semibold hover:bg-cyan-600/20 transition-all disabled:opacity-50">
+                  <RefreshCw className={`w-3.5 h-3.5 ${dataLoading ? 'animate-spin' : ''}`} /> Refresh Data
+                </button>
+              )}
+              <button onClick={() => {
+                const s = liveShipments.length > 0 ? liveShipments : DEMO_SHIPMENTS;
+                const t = liveTrucks.length > 0 ? liveTrucks : DEMO_TRUCKS;
+                const rs = SCENARIOS.map(sc => ({ name: sc.name, ...runLocalConsolidation(s, t, { maxGroupRadiusKm: sc.maxGroupRadiusKm, timeWindowToleranceMinutes: sc.timeWindowToleranceMinutes }) }));
+                setScenarioResults(rs); setShowSim(true);
+              }}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg border border-purple-500/30 bg-purple-600/10 text-purple-300 text-sm font-semibold hover:bg-purple-600/20 transition-all">
                 <FlaskConical className="w-4 h-4" /> Simulate Scenarios
               </button>
               <button onClick={runConsolidation} disabled={loading}
                 className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-orange-600 to-amber-500 text-white text-sm font-semibold hover:from-orange-500 hover:to-amber-400 transition-all disabled:opacity-50 shadow-lg shadow-orange-600/20">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {loading ? 'Running 5 Agents…' : 'Run AI Consolidation'}
+                {loading ? 'Running 8 Agents…' : 'Run AI Consolidation'}
               </button>
             </div>
           </div>
