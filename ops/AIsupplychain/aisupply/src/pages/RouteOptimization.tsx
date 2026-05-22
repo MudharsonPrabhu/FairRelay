@@ -758,9 +758,9 @@ export function RouteOptimization() {
 
     let result: any = null;
 
-    // Primary: brain directly
+    // Primary: local brain first, then remote
     try {
-      const res = await fetch(`${BRAIN_URL}/api/v1/routes/dynamic-insert`, {
+      const res = await fetch(`${BRAIN_URL_LOCAL}/api/v1/routes/dynamic-insert`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -768,6 +768,18 @@ export function RouteOptimization() {
       });
       if (res.ok) result = await res.json();
     } catch { /* fall through */ }
+
+    if (!result) {
+      try {
+        const res = await fetch(`${BRAIN_URL_REMOTE}/api/v1/routes/dynamic-insert`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (res.ok) result = await res.json();
+      } catch { /* fall through */ }
+    }
 
     // Fallback: backend-dm proxy
     if (!result) {
